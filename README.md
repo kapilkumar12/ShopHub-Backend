@@ -56,7 +56,7 @@ src/
  ├── controllers/
  ├── models/
  ├── routes/
- ├── services/
+ ├── queues/
  ├── workers/
  ├── utils/
  ├── config/
