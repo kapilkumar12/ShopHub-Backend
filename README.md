@@ -207,8 +207,8 @@ REDIS_PORT=6379
 
 ## 4️⃣ Start Redis
 
-```bash
-redis-server
+```ubuntu
+sudo service redis-server start
 ```
 
 ---
