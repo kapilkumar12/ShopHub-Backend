@@ -8,6 +8,11 @@ const { processRefund } = require("./paymentController");
 const refundEmailTemplate = require("../utils/emailTemplates/refundEmailTemplate");
 const refundQueue = require("../queues/refundQueue");
 const notificationModel = require("../models/notificationModel");
+const orderShippedTemplate = require("../utils/emailTemplates/orderShippedTemplate");
+const orderDeliveredTemplate = require("../utils/emailTemplates/orderDeliveredTemplate");
+const generateInvoice = require("../utils/generateInvoice");
+const { Resend } = require("resend");
+const resend = new Resend(process.env.RESEND_API_KEY);
 
 // create order and empty cart
 async function createOrderController(req, res) {
@@ -90,6 +95,33 @@ async function getAllOrdersController(req, res) {
   }
 }
 
+// fetch single order by id
+
+async function getSingleOrderController(req, res) {
+  try {
+    const orderId = req.params.id;
+    const userId = req.user.id;
+    const order = await orderModel
+      .findById(orderId)
+      .populate("user", "name email")
+      .populate("items.productId", "name price image");
+    if (req.user.role !== "admin" && order.user._id.toString() !== userId) {
+      return res.status(403).json({
+        message: "Unauthorized access",
+      });
+    }
+    res.status(200).json({
+      message: "Order fetch successfully",
+      order,
+    });
+  } catch (error) {
+    res.status(500).json({
+      message: "Failed to fetch orders",
+      error: error.message,
+    });
+  }
+}
+
 // cancel order
 
 async function orderCancelController(req, res) {
@@ -147,11 +179,19 @@ async function orderCancelController(req, res) {
           paymentMethod: order.paymentMethod,
         });
 
+        const pdfBuffer = await generateInvoice(order);
+
         await sendEmail({
           to: order.user.email,
           subject: "Refund Processed 💰",
           text: `Hello ${order.user.name}, your refund of ₹${order.refundAmount} has been processed.`,
           html: refundHtml,
+          attachments: [
+            {
+              filename: `invoice-${order._id}.pdf`,
+              content: pdfBuffer,
+            },
+          ],
         });
       }
     } else {
@@ -203,7 +243,9 @@ async function updateOrderStatusController(req, res) {
       });
     }
 
-    const order = await orderModel.findById(orderId);
+    const order = await orderModel
+      .findById(orderId)
+      .populate("user", "name email");
 
     if (!order) {
       return res.status(404).json({
@@ -213,6 +255,10 @@ async function updateOrderStatusController(req, res) {
 
     order.status = status;
 
+    if (!order.trackingHistory) {
+      order.trackingHistory = [];
+    }
+
     // 📦 tracking update
     order.trackingHistory.push({
       status,
@@ -220,6 +266,49 @@ async function updateOrderStatusController(req, res) {
     });
 
     await order.save();
+
+    let html;
+    if (status === "confirmed") {
+      html = orderConfirmedTemplate({
+        name: order.user.name,
+        orderId: order._id,
+        date: order.updatedAt,
+        status: status,
+      });
+    } else if (status === "shipped") {
+      html = orderShippedTemplate({
+        name: order.user.name,
+        orderId: order._id,
+        date: order.updatedAt,
+        status: status,
+      });
+    } else if (status === "delivered") {
+      html = orderDeliveredTemplate({
+        name: order.user.name,
+        orderId: order._id,
+        date: order.updatedAt,
+        status: status,
+      });
+    } else if (status === "cancelled") {
+      html = orderCancelTemplate({
+        name: order.user.name,
+        orderId: order._id,
+        date: order.updatedAt,
+        status: status,
+      });
+    }
+
+    const userEmail = order.user.email;
+
+    try {
+      await sendEmail({
+        to: userEmail,
+        subject: `Order ${status}`,
+        html,
+      });
+    } catch (emailErr) {
+      console.error("Email failed:", emailErr.message);
+    }
 
     // 🔥 create notification
     const notification = await notificationModel.create({
@@ -278,10 +367,55 @@ async function getOrderTrackingController(req, res) {
   }
 }
 
+// invoice generate
+
+async function invoiceController(req, res) {
+  try {
+    const order = await orderModel
+      .findById(req.params.orderId)
+      .populate("user")
+      .populate("items.productId");
+
+    if (!order) {
+      return res.status(404).json({ message: "Order not found" });
+    }
+
+    const pdfBuffer = await generateInvoice(order);
+
+    await resend.emails.send({
+      from:"onboarding@resend.dev",
+      to:order.user.email,
+      subject:"Your Invoice",
+      html:"<p>Your invoice is attached</p>",
+      attachments:[
+        {
+          filename:`invoice-${order._id}.pdf`,
+          content:pdfBuffer
+        }
+      ]
+    })
+
+    res.set({
+      "Content-Type": "application/pdf",
+      "Content-Disposition": `attachment; filename=invoice-${order._id}.pdf`,
+    });
+
+    res.send(pdfBuffer);
+  } catch (error) {
+    console.log("INVOICE ERROR:", error);
+    res.status(500).json({
+      message: "Invoice failed",
+      error: error.message,
+    });
+  }
+}
+
 module.exports = {
   createOrderController,
   getAllOrdersController,
   orderCancelController,
   updateOrderStatusController,
   getOrderTrackingController,
+  invoiceController,
+  getSingleOrderController,
 };

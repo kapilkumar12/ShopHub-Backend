@@ -5,12 +5,13 @@ const sendEmail = require("../utils/sendEmail");
 const jwt = require("jsonwebtoken");
 const bcrypt = require("bcrypt");
 const otpTemplate = require("../utils/emailTemplates/otpTemplate");
+const { tryCatch } = require("bullmq");
 
 // sign-up controller
 
 async function signUpController(req, res) {
   try {
-    const { name, email, password } = req.body;
+    const { name, email, password, role } = req.body;
     const existingUser = await userModel.findOne({ email });
 
     if (existingUser) {
@@ -20,7 +21,7 @@ async function signUpController(req, res) {
     const otpValue = generateOTP();
 
     const hashedOtp = await bcrypt.hash(otpValue, 10);
-
+    await OTP.deleteMany({ email });
     await OTP.create({
       email,
       otp: hashedOtp,
@@ -29,28 +30,28 @@ async function signUpController(req, res) {
 
     const html = otpTemplate(otpValue, name);
 
-   try {
-  await sendEmail({
-    to: email,
-    subject: "OTP Verification",
-    text: `Your OTP is ${otpValue}`,
-    html
-  });
+    try {
+      await sendEmail({
+        to: email,
+        subject: "OTP Verification",
+        text: `Your OTP is ${otpValue}`,
+        html,
+      });
+    } catch (error) {
+      console.log("Email failed, deleting OTP");
 
-} catch (error) {
-  console.log("Email failed, deleting OTP");
+      await OTP.deleteMany({ email }); // 🔥 cleanup
 
-  await OTP.deleteMany({ email }); // 🔥 cleanup
-
-  return res.status(500).json({
-    message: "Email sending failed"
-  });
-}
+      return res.status(500).json({
+        message: "Email sending failed",
+      });
+    }
 
     const user = await userModel.create({
       name,
       email,
-      password
+      password,
+      role,
     });
 
     res.status(201).json({
@@ -70,7 +71,7 @@ async function otpVerifyController(req, res) {
   try {
     const { email, otp } = req.body;
 
-    const otpRecord = await OTP.findOne({ email });
+    const otpRecord = await OTP.findOne({ email }).sort({ createdAt: -1 });
 
     if (!otpRecord) {
       return res.status(400).json({
@@ -94,16 +95,17 @@ async function otpVerifyController(req, res) {
         message: "User not found",
       });
     }
-    await userModel.updateOne(
-  { email },
-  { isVerified: true }
-);
+    await userModel.updateOne({ email }, { isVerified: true });
 
     await OTP.deleteMany({ email });
 
-    const token = jwt.sign({ id: user._id, role: user.role}, process.env.JWT_SECRET, {
-      expiresIn: "3d",
-    });
+    const token = jwt.sign(
+      { id: user._id, role: user.role },
+      process.env.JWT_SECRET,
+      {
+        expiresIn: "3d",
+      },
+    );
     res.cookie("token", token, {
       httpOnly: true,
       secure: false, // production me true
@@ -127,6 +129,53 @@ async function otpVerifyController(req, res) {
   }
 }
 
+// resend otp
+
+async function resendOtpController(req, res) {
+  try {
+    const { email } = req.body;
+    if (!email) {
+      return res.status(400).json({
+        message: "Email is required",
+      });
+    }
+    const user = await userModel.findOne({ email });
+    if (!user) {
+      return res.status(400).josn({
+        message: "User not found",
+      });
+    }
+    if (user.isVerified) {
+      return res.status(400).josn({
+        message: "User already verified",
+      });
+    }
+    await OTP.deleteMany({ email });
+    const otpValue = generateOTP();
+    const hashedOto = await bcrypt.hash(otpValue, 10);
+    await OTP.create({
+      email,
+      otp: hashedOtp,
+      expiresAt: new Date(Date.now() + 5 * 60 * 1000), // 5 min
+    });
+    const html = otpTemplate(otpValue, name);
+    await sendEmail({
+      to: email,
+      subject: "Resend OTP Verification",
+      text: `Your OTP is ${otpValue}`,
+      html,
+    });
+    res.status(200).json({
+      message: "OTP resent successfully 📩",
+    });
+  } catch (error) {
+    res.status(500).json({
+      message: "Failed to resend OTP",
+      error: error.message,
+    });
+  }
+}
+
 // login controller
 
 async function loginController(req, res) {
@@ -138,14 +187,14 @@ async function loginController(req, res) {
 
     if (!user) {
       return res.status(404).json({
-        message: "User not found"
+        message: "User not found",
       });
     }
 
     // check verified
     if (!user.isVerified) {
       return res.status(400).json({
-        message: "Please verify your email first"
+        message: "Please verify your email first",
       });
     }
 
@@ -153,7 +202,7 @@ async function loginController(req, res) {
 
     if (!isMatch) {
       return res.status(400).json({
-        message: "Invalid credentials"
+        message: "Invalid credentials",
       });
     }
 
@@ -161,30 +210,30 @@ async function loginController(req, res) {
     const token = jwt.sign(
       { id: user._id, role: user.role },
       process.env.JWT_SECRET,
-      { expiresIn: "3d" }
+      { expiresIn: "3d" },
     );
 
     // 🍪 set cookie
     res.cookie("token", token, {
       httpOnly: true,
       secure: false, // production → true
-      sameSite: "strict",
-      maxAge: 3 * 24 * 60 * 60 * 1000
+      sameSite: "lax",
+      maxAge: 3 * 24 * 60 * 60 * 1000,
     });
 
     res.status(200).json({
       message: "Login successful",
+      token: token,
       user: {
         id: user._id,
         name: user.name,
-        email: user.email
-      }
+        email: user.email,
+      },
     });
-
   } catch (error) {
     res.status(500).json({
       message: "Login failed",
-      error: error.message
+      error: error.message,
     });
   }
 }
@@ -192,24 +241,22 @@ async function loginController(req, res) {
 // logout controller
 
 async function logoutController(req, res) {
-    
   const cookieOptions = {
     httpOnly: true,
     secure: false, // production → true
     sameSite: "strict",
-    maxAge: 0
-  }
-  res.clearCookie("token", cookieOptions)
+    maxAge: 0,
+  };
+  res.clearCookie("token", cookieOptions);
   res.status(200).json({
-    message: "Logout successful"
+    message: "Logout successful",
   });
-
 }
-
 
 module.exports = {
   signUpController,
   otpVerifyController,
   loginController,
-  logoutController
+  logoutController,
+  resendOtpController
 };

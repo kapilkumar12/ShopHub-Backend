@@ -1,6 +1,17 @@
 const productModel = require("../models/productModel");
 const imagekit = require("../utils/imagekit");
 
+function extractFileId(url) {
+  try {
+    const parts = url.split("/");
+    const fileName = parts.pop().split("?")[0]; // query remove
+    return fileName;
+  } catch (error) {
+    console.log("extractFileId error:", error.message);
+    return null;
+  }
+}
+
 // add product controller
 
 async function addProductController(req, res) {
@@ -23,7 +34,10 @@ async function addProductController(req, res) {
           fileName: file.originalname,
         });
 
-        imageUrls.push(uploaded.url);
+        imageUrls.push({
+          url: uploaded.url,
+          fileId: uploaded.fileId,
+        });
       }
     }
 
@@ -90,57 +104,72 @@ async function updateProductController(req, res) {
     const id = req.params.id;
 
     // 🔍 find product
-    const existingProduct = await productModel.findById(id);
+    const product = await productModel.findById(id);
 
-    if (!existingProduct) {
+    if (!product) {
       return res.status(404).json({
         message: "Product not found",
       });
     }
 
     // 🔐 authorization
-    if (!existingProduct.createdBy.equals(req.user.id) && req.user.role !== "admin") {
+    if (!product.createdBy.equals(req.user.id) && req.user.role !== "admin") {
       return res.status(403).json({
         message: "Unauthorized to update this product",
       });
     }
 
     // 🔒 allowed fields only
-    const allowedFields = ["name", "description", "price", "category", "stock"];
+    const fields = ["name", "description", "price", "category", "stock"];
 
-    let updates = {};
-
-    allowedFields.forEach((field) => {
+    fields.forEach((field) => {
       if (req.body[field] !== undefined) {
-        updates[field] = req.body[field];
+        product[field] = req.body[field];
       }
     });
 
+    let deletedImages = [];
+
+    try {
+      deletedImages = JSON.parse(req.body.deletedImages || "[]");
+    } catch (error) {
+      deletedImages = [];
+    }
+
+    if (deletedImages.length > 0) {
+      for (const img of deletedImages) {
+         if (!img.fileId) continue;
+        try {
+          await imagekit.deleteFile(img.fileId);
+        } catch (error) {
+          console.log("Delete error:", error.message);
+        }
+      }
+      product.images = product.images.filter(
+        (img) => !deletedImages.some((d) =>  d.fileId === img.fileId),
+      );
+    }
+
     // 🖼️ image upload
     if (req.files && req.files.length > 0) {
-      let imageUrls = [];
-
       for (let file of req.files) {
         const uploaded = await imagekit.upload({
           file: file.buffer,
           fileName: file.originalname,
         });
-
-        imageUrls.push(uploaded.url);
+        product.images.push({
+          url: uploaded.url,
+          fileId: uploaded.fileId,
+        });
       }
-
-      updates.images = imageUrls;
     }
 
     // ⚡ update
-    const updatedProduct = await productModel.findByIdAndUpdate(id, updates, {
-      new: true,
-      runValidators: true,
-    });
+    await product.save();
 
     return res.status(200).json({
       message: "Product updated successfully",
-      product: updatedProduct,
+      product: product,
     });
   } catch (error) {
     console.error("Update Product Error:", error);

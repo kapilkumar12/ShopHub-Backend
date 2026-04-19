@@ -8,8 +8,7 @@ async function authMiddleware(req, res, next) {
       return res.status(401).json({ message: "Unauthorized - No token" });
     }
 
-    const decoded = jwt
-      .verify(token, process.env.JWT_SECRET);
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
     const user = await userModel.findById(decoded.id).select("_id role");
     if (!user) {
       return res.status(401).json({ message: "Unauthorized - User not found" });

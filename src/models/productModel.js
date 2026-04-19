@@ -27,7 +27,8 @@ const productSchema = new mongoose.Schema(
     },
     images: [
       {
-        type: String, // image URL
+        url: String,
+        fileId: String,
       },
     ],
     createdBy: {

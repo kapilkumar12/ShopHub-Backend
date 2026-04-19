@@ -1,4 +1,6 @@
 const orderModel = require("../models/orderModel");
+const productModel = require("../models/productModel")
+
 
 async function getDashboardStats(req, res) {
   try {
@@ -87,7 +89,7 @@ async function getFilteredOrders(req, res) {
       return res.status(403).json({ message: "Admin only access" });
     }
 
-    const { status, startDate, endDate, page = 1, limit = 5 } = req.query;
+    const { status, startDate, endDate, search, page = 1, limit = 5 } = req.query;
 
     let filter = {};
 
@@ -107,12 +109,35 @@ async function getFilteredOrders(req, res) {
     // 📄 Pagination
     const skip = (page - 1) * limit;
 
-    const orders = await orderModel
-      .find(filter)
-      .populate("user", "name email")
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(Number(limit));
+    const orders = await orderModel([
+         
+    {
+        $lookup: {
+          from: "users",
+          localField: "user",
+          foreignField: "_id",
+          as: "user",
+        },
+      },
+      { $unwind: "$user" },
+      {
+        $match: {
+          ...filter,
+          ...(search
+            ? {
+                $or: [
+                  { "user.name": { $regex: search, $options: "i" } },
+                  { "user.email": { $regex: search, $options: "i" } },
+                ],
+              }
+            : {}),
+        },
+      },
+      { $sort: { createdAt: -1 } },
+      { $skip: skip },
+      { $limit: Number(limit) },
+
+    ]);
 
     const total = await orderModel.countDocuments(filter);
 
@@ -129,6 +154,62 @@ async function getFilteredOrders(req, res) {
     });
   }
 }
+
+
+// Products Filter API
+
+async function getFilteredProducts(req, res) {
+  try {
+    if (req.user.role !== "admin") {
+      return res.status(403).json({ message: "Admin only access" });
+    }
+
+    const {startDate, endDate, search, page = 1, limit = 5 } = req.query;
+
+    let filter = {};
+
+
+    // 📅 Date filter
+    if (startDate && endDate) {
+      filter.createdAt = {
+        $gte: new Date(startDate),
+        $lte: new Date(endDate),
+      };
+    }
+
+     if (search) {
+      filter.$or = [
+        { name: { $regex: search, $options: "i" } },
+        { description: { $regex: search, $options: "i" } },
+        { category: { $regex: search, $options: "i" } },
+      ];
+    }
+
+    // 📄 Pagination
+    const skip = (page - 1) * limit;
+
+    const products = await productModel
+      .find(filter)
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(Number(limit));
+
+    const total = await productModel.countDocuments(filter);
+
+    res.status(200).json({
+      total,
+      page: Number(page),
+      totalPages: Math.ceil(total / limit),
+      products,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      message: "Fetch products failed",
+      error: error.message,
+    });
+  }
+}
+
 
 // daily sales api
 
@@ -252,6 +333,7 @@ async function getWeeklySales(req, res) {
 module.exports = {
   getDashboardStats,
   getFilteredOrders,
+  getFilteredProducts,
   getDailySales,
   getMonthlySales,
   getWeeklySales,
