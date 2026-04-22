@@ -10,7 +10,7 @@ const upload = multer({
 })
 
 router.post('/add-product', authMiddleware, upload.array('images'), addProductController)
-router.get('/all-products', getAllProductsController)
+router.get('/', getAllProductsController)
 router.get('/get-single-product/:id', getSingleProductController)
 router.put('/update-product/:id', authMiddleware, upload.array('images'), updateProductController)
 router.delete('/delete-product/:id',authMiddleware, deleteProductController)

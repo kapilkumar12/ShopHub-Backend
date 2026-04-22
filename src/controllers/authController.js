@@ -238,6 +238,28 @@ async function loginController(req, res) {
   }
 }
 
+// get user
+
+async function getUserController(req, res) {
+  try {
+      const userId = req.user.id || req.user._id;
+      const user = await userModel.findById(userId).select("-password");
+      if (!user) {
+        return res.status(404).json({
+          message:"User not found"
+        })
+      }
+      res.status(200).json({
+        user
+      })
+  } catch (error) {
+    return res.status(500).json({
+      message:"User fetch failed",
+      error: error.message
+    })
+  }
+}
+
 // logout controller
 
 async function logoutController(req, res) {
@@ -257,6 +279,7 @@ module.exports = {
   signUpController,
   otpVerifyController,
   loginController,
+  getUserController,
   logoutController,
   resendOtpController
 };

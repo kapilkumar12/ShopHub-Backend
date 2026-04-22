@@ -1,6 +1,5 @@
 const orderModel = require("../models/orderModel");
-const productModel = require("../models/productModel")
-
+const productModel = require("../models/productModel");
 
 async function getDashboardStats(req, res) {
   try {
@@ -89,7 +88,20 @@ async function getFilteredOrders(req, res) {
       return res.status(403).json({ message: "Admin only access" });
     }
 
-    const { status, startDate, endDate, search, page = 1, limit = 5 } = req.query;
+    let {
+      status,
+      startDate,
+      endDate,
+      search,
+      category,
+      page = 1,
+      limit = 5,
+    } = req.query;
+
+    page = Math.max(1, Number(page));
+    limit = Math.min(50, Number(limit)); // max 50 limit
+
+    const skip = (page - 1) * limit;
 
     let filter = {};
 
@@ -106,12 +118,26 @@ async function getFilteredOrders(req, res) {
       };
     }
 
-    // 📄 Pagination
-    const skip = (page - 1) * limit;
 
-    const orders = await orderModel([
-         
-    {
+        const matchStage = {
+      ...filter,
+      ...(search
+        ? {
+            $or: [
+              { "user.name": { $regex: search, $options: "i" } },
+              { "user.email": { $regex: search, $options: "i" } },
+            ],
+          }
+        : {}),
+      ...(category
+        ? {
+            "products.category": category,
+          }
+        : {}),
+    };
+
+    const pipeline = [
+      {
         $lookup: {
           from: "users",
           localField: "user",
@@ -120,30 +146,36 @@ async function getFilteredOrders(req, res) {
         },
       },
       { $unwind: "$user" },
+
+      // 🔥 join products
       {
-        $match: {
-          ...filter,
-          ...(search
-            ? {
-                $or: [
-                  { "user.name": { $regex: search, $options: "i" } },
-                  { "user.email": { $regex: search, $options: "i" } },
-                ],
-              }
-            : {}),
+        $lookup: {
+          from: "products",
+          localField: "items.product",
+          foreignField: "_id",
+          as: "products",
         },
       },
+
+      { $match: matchStage },
+
       { $sort: { createdAt: -1 } },
       { $skip: skip },
-      { $limit: Number(limit) },
+      { $limit: limit },
+    ];
 
+    const orders = await orderModel.aggregate(pipeline);
+
+    const totalData = await orderModel.aggregate([
+      ...pipeline.slice(0, -3), // remove skip/limit
+      { $count: "total" },
     ]);
 
-    const total = await orderModel.countDocuments(filter);
+    const total = totalData[0]?.total || 0;
 
     res.status(200).json({
       total,
-      page: Number(page),
+      page,
       totalPages: Math.ceil(total / limit),
       orders,
     });
@@ -155,7 +187,6 @@ async function getFilteredOrders(req, res) {
   }
 }
 
-
 // Products Filter API
 
 async function getFilteredProducts(req, res) {
@@ -164,20 +195,25 @@ async function getFilteredProducts(req, res) {
       return res.status(403).json({ message: "Admin only access" });
     }
 
-    const {startDate, endDate, search, page = 1, limit = 5 } = req.query;
+    let {
+      search,
+      category,
+      sort,
+      minPrice,
+      maxPrice,
+      page = 1,
+      limit = 5,
+    } = req.query;
+
+    page = Math.max(1, Number(page));
+    limit = Math.min(50, Number(limit));
+
+    const skip = (page - 1) * limit;
 
     let filter = {};
 
-
-    // 📅 Date filter
-    if (startDate && endDate) {
-      filter.createdAt = {
-        $gte: new Date(startDate),
-        $lte: new Date(endDate),
-      };
-    }
-
-     if (search) {
+    // 🔍 SEARCH
+    if (search) {
       filter.$or = [
         { name: { $regex: search, $options: "i" } },
         { description: { $regex: search, $options: "i" } },
@@ -185,31 +221,49 @@ async function getFilteredProducts(req, res) {
       ];
     }
 
-    // 📄 Pagination
-    const skip = (page - 1) * limit;
+    // 📦 CATEGORY
+    if (category) {
+      filter.category = category;
+    }
+
+    // 💰 PRICE
+    if (minPrice || maxPrice) {
+      filter.price = {};
+      if (minPrice) filter.price.$gte = Number(minPrice);
+      if (maxPrice) filter.price.$lte = Number(maxPrice);
+    }
+
+    // 🔄 SORT
+    let sortOption = { createdAt: -1 };
+
+    if (sort === "price_asc") sortOption = { price: 1 };
+    if (sort === "price_desc") sortOption = { price: -1 };
+    if (sort === "latest") sortOption = { createdAt: -1 };
 
     const products = await productModel
       .find(filter)
-      .sort({ createdAt: -1 })
+      .sort(sortOption)
       .skip(skip)
-      .limit(Number(limit));
+      .limit(limit);
 
     const total = await productModel.countDocuments(filter);
+    const categories = await productModel.distinct("category");
 
     res.status(200).json({
+      success: true,
       total,
-      page: Number(page),
+      page,
       totalPages: Math.ceil(total / limit),
       products,
+      categories
     });
   } catch (error) {
-    return res.status(500).json({
+    res.status(500).json({
       message: "Fetch products failed",
       error: error.message,
     });
   }
 }
-
 
 // daily sales api
 
