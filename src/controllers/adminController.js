@@ -1,80 +1,136 @@
 const orderModel = require("../models/orderModel");
 const productModel = require("../models/productModel");
 
-async function getDashboardStats(req, res) {
+async function getAdminDashboardController(req, res) {
   try {
-    if (req.user.role !== "admin") {
-      return res.status(403).json({
-        message: "Admin only access",
-      });
-    }
+    //////////////////////////////////////////////////////////////
+    // 🔥 ORDER STATS
+    //////////////////////////////////////////////////////////////
+
     const totalOrders = await orderModel.countDocuments();
-    const revenueResult = await orderModel.aggregate([
-      { $match: { paymentStatus: "paid" } },
-      { $group: { _id: null, totalRevenue: { $sum: "$totalPrice" } } },
-    ]);
-    const totalRevenue = revenueResult[0]?.totalRevenue || 0;
+
     const pendingOrders = await orderModel.countDocuments({
       status: "pending",
     });
+
     const cancelledOrders = await orderModel.countDocuments({
       status: "cancelled",
     });
 
-    // 🔥 STEP 1: DB se monthly data lao
-    const monthlySales = await orderModel.aggregate([
+    const revenueResult = await orderModel.aggregate([
       {
-        $match: { paymentStatus: "paid" },
+        $group: {
+          _id: null,
+          totalRevenue: { $sum: "$totalPrice" },
+        },
       },
+    ]);
+
+    const totalRevenue = revenueResult[0]?.totalRevenue || 0;
+
+    //////////////////////////////////////////////////////////////
+    // 🔥 SALES (DAILY / WEEKLY / MONTHLY)
+    //////////////////////////////////////////////////////////////
+
+    const dailySales = await orderModel.aggregate([
+      {
+        $group: {
+          _id: { $dayOfMonth: "$createdAt" },
+          total: { $sum: "$totalPrice" },
+        },
+      },
+      { $sort: { _id: 1 } },
+    ]);
+
+    const monthlySales = await orderModel.aggregate([
       {
         $group: {
           _id: { $month: "$createdAt" },
           total: { $sum: "$totalPrice" },
         },
       },
+      { $sort: { _id: 1 } },
+    ]);
+
+    const weeklySales = await orderModel.aggregate([
       {
-        $sort: { _id: 1 },
+        $group: {
+          _id: { $week: "$createdAt" },
+          total: { $sum: "$totalPrice" },
+        },
+      },
+      { $sort: { _id: 1 } },
+    ]);
+
+    //////////////////////////////////////////////////////////////
+    // 🔥 PRODUCT ANALYTICS
+    //////////////////////////////////////////////////////////////
+
+    const totals = await productModel.aggregate([
+      {
+        $group: {
+          _id: null,
+          totalWishlist: { $sum: "$wishlistCount" },
+          totalViews: { $sum: "$views" },
+          totalSales: { $sum: "$soldCount" },
+        },
       },
     ]);
 
-    // 🔥 STEP 2: Month format karo
-    const months = [
-      "",
-      "Jan",
-      "Feb",
-      "Mar",
-      "Apr",
-      "May",
-      "Jun",
-      "Jul",
-      "Aug",
-      "Sep",
-      "Oct",
-      "Nov",
-      "Dec",
-    ];
+    const stats = totals[0] || {
+      totalWishlist: 0,
+      totalViews: 0,
+      totalSales: 0,
+    };
 
-    const formattedSales = monthlySales.map((item) => ({
-      month: months[item._id],
-      total: item.total,
-    }));
+    const topWishlist = await productModel
+      .find()
+      .sort({ wishlistCount: -1 })
+      .limit(5);
+
+    const topViewed = await productModel.find().sort({ views: -1 }).limit(5);
+
+    const topSelling = await productModel
+      .find()
+      .sort({ soldCount: -1 })
+      .limit(5);
+
+    //////////////////////////////////////////////////////////////
+    // 🔥 RECENT ORDERS
+    //////////////////////////////////////////////////////////////
 
     const recentOrders = await orderModel
       .find()
+      .populate("user", "name")
       .sort({ createdAt: -1 })
-      .limit(5)
-      .populate("user", "name email");
-    res.status(200).json({
+      .limit(5);
+
+    //////////////////////////////////////////////////////////////
+
+    res.json({
+      // orders
       totalOrders,
-      totalRevenue,
       pendingOrders,
       cancelledOrders,
-      monthlySales: formattedSales,
+      totalRevenue,
+
+      // sales
+      dailySales,
+      monthlySales,
+      weeklySales,
+
+      // product analytics
+      stats,
+      topWishlist,
+      topViewed,
+      topSelling,
+
+      // orders list
       recentOrders,
     });
   } catch (error) {
-    return res.status(500).json({
-      message: "Dashboard fetch failed",
+    res.status(500).json({
+      message: "Dashboard failed",
       error: error.message,
     });
   }
@@ -118,8 +174,7 @@ async function getFilteredOrders(req, res) {
       };
     }
 
-
-        const matchStage = {
+    const matchStage = {
       ...filter,
       ...(search
         ? {
@@ -255,7 +310,7 @@ async function getFilteredProducts(req, res) {
       page,
       totalPages: Math.ceil(total / limit),
       products,
-      categories
+      categories,
     });
   } catch (error) {
     res.status(500).json({
@@ -265,130 +320,8 @@ async function getFilteredProducts(req, res) {
   }
 }
 
-// daily sales api
-
-async function getDailySales(req, res) {
-  try {
-    if (req.user.role !== "admin") {
-      return res.status(403).json({ message: "Admin only access" });
-    }
-
-    const sales = await orderModel.aggregate([
-      {
-        $match: { paymentStatus: "paid" },
-      },
-      {
-        $group: {
-          _id: {
-            $dayOfMonth: "$createdAt",
-          },
-          total: { $sum: "$totalPrice" },
-        },
-      },
-      {
-        $sort: { _id: 1 },
-      },
-    ]);
-
-    res.status(200).json({ sales });
-  } catch (error) {
-    return res.status(500).json({
-      message: "Daily sales fetch failed",
-      error: error.message,
-    });
-  }
-}
-
-// monthly sales api
-
-async function getMonthlySales(req, res) {
-  try {
-    if (req.user.role !== "admin") {
-      return res.status(403).json({ message: "Admin only access" });
-    }
-
-    const sales = await orderModel.aggregate([
-      {
-        $match: { paymentStatus: "paid" },
-      },
-      {
-        $group: {
-          _id: { $month: "$createdAt" },
-          total: { $sum: "$totalPrice" },
-        },
-      },
-      {
-        $sort: { _id: 1 },
-      },
-    ]);
-
-    const months = [
-      "",
-      "Jan",
-      "Feb",
-      "Mar",
-      "Apr",
-      "May",
-      "Jun",
-      "Jul",
-      "Aug",
-      "Sep",
-      "Oct",
-      "Nov",
-      "Dec",
-    ];
-
-    const formatted = sales.map((item) => ({
-      month: months[item._id],
-      total: item.total,
-    }));
-
-    res.status(200).json({ sales: formatted });
-  } catch (error) {
-    return res.status(500).json({
-      message: "Monthly sales fetch failed",
-      error: error.message,
-    });
-  }
-}
-
-// weekly sales
-
-async function getWeeklySales(req, res) {
-  try {
-    if (req.user.role !== "admin") {
-      return res.status(403).json({ message: "Admin only access" });
-    }
-
-    const sales = await orderModel.aggregate([
-      {
-        $match: { paymentStatus: "paid" },
-      },
-      {
-        $group: {
-          _id: { $week: "$createdAt" },
-          total: { $sum: "$totalPrice" },
-        },
-      },
-      {
-        $sort: { _id: 1 },
-      },
-    ]);
-
-    res.status(200).json({ sales });
-  } catch (error) {
-    res.status(500).json({
-      message: "Weekly sales fetch failed",
-      error: error.message,
-    });
-  }
-}
-
 module.exports = {
-  getDashboardStats,
+  getAdminDashboardController,
   getFilteredOrders,
   getFilteredProducts,
-  getDailySales,
-  getMonthlySales,
-  getWeeklySales,
 };

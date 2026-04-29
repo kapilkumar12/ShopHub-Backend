@@ -50,15 +50,26 @@ async function createOrderController(req, res) {
     const orderItems = cart.items
       .map((item) => {
         if (!item.product) return null;
-        totalPrice += item.product.price * item.quantity;
+
+        const price = Number(item.product.finalPrice) || 0;
+        const quantity = Number(item.quantity) || 0;
+
+        totalPrice += price * quantity;
+
         return {
           productId: item.product._id,
           name: item.product.name,
-          price: item.product.price,
-          quantity: item.quantity,
+          price,
+          quantity,
         };
       })
       .filter(Boolean);
+
+    if (isNaN(totalPrice)) {
+      return res.status(400).json({
+        message: "Invalid total price",
+      });
+    }
 
     for (let item of orderItems) {
       const updated = await productModel.findOneAndUpdate(
@@ -102,14 +113,6 @@ async function createOrderController(req, res) {
 
     cart.items = [];
     await cart.save();
-
-    await Promise.all(
-      orderItems.map((item) =>
-        productModel.findByIdAndUpdate(item.productId, {
-          $inc: { stock: -item.quantity, salesCount: item.quantity },
-        }),
-      ),
-    );
 
     const html = orderTemplate({
       name: user.name,
@@ -326,6 +329,37 @@ async function updateOrderStatusController(req, res) {
     if (!order) {
       return res.status(404).json({
         message: "Order not found",
+      });
+    }
+
+    const currentStatus = order.status;
+
+    if (
+      status === "cancelled" &&
+      ["shipped", "delivered"].includes(currentStatus)
+    ) {
+      return res.status(400).json({
+        message: "Cannot cancel after shipped or delivered",
+      });
+    }
+
+    if (currentStatus === "delivered") {
+      return res.status(400).json({
+        message: "Order already delivered. No further updates allowed",
+      });
+    }
+
+    const allowedTransitions = {
+      pending: ["confirmed", "cancelled"],
+      confirmed: ["shipped", "cancelled"],
+      shipped: ["delivered"],
+      delivered: [],
+      cancelled: [],
+    };
+
+    if (!allowedTransitions[currentStatus].includes(status)) {
+      return res.status(400).json({
+        message: `Cannot change status from ${currentStatus} to ${status}`,
       });
     }
 

@@ -1,12 +1,23 @@
 const wishlistModel = require("../models/wishlistModel");
 const productModel = require("../models/productModel");
+const mongoose = require("mongoose");
 
 // toggle wishlist controller
 
 async function toggleWishlistController(req, res) {
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
   try {
     const userId = req.user._id || req.user.id;
     const { productId } = req.body;
+
+    const product = await productModel.findById(productId);
+    if (!product) {
+      return res.status(404).json({
+        message: "Product not found",
+      });
+    }
 
     const existing = await wishlistModel.findOne({
       user: userId,
@@ -14,11 +25,16 @@ async function toggleWishlistController(req, res) {
     });
 
     if (existing) {
-      await existing.deleteOne();
+      await wishlistModel.deleteOne({ _id: existing._id }).session(session);
 
-      await productModel.findByIdAndUpdate(productId, {
-        $inc: { wishlistCount: -1 },
-      });
+      await productModel.findByIdAndUpdate(
+        productId,
+        { $inc: { wishlistCount: -1 } },
+        { session },
+      );
+
+      await session.commitTransaction();
+      session.endSession();
 
       return res.status(200).json({
         message: "Removed from wishlist",
@@ -26,15 +42,19 @@ async function toggleWishlistController(req, res) {
       });
     }
 
-    await wishlistModel.create({
-      user: userId,
-      product: productId,
+    await wishlistModel.create([{ user: userId, product: productId }], {
+      session,
     });
 
-    await productModel.findByIdAndUpdate(productId, {
-      $inc: { wishlistCount: 1 },
-    });
+    await productModel.findByIdAndUpdate(
+      productId,
+      { $inc: { wishlistCount: 1 } },
+      { session },
+    );
 
+    await session.commitTransaction();
+    session.endSession();
+    
     res.status(200).json({
       message: "Added to wishlist",
       wishlisted: true,
@@ -61,7 +81,6 @@ async function getUserWishlistController(req, res) {
       message: "Wishlist fetched",
       products: wishlist.map((item) => item.product),
     });
-    
   } catch (error) {
     return res.status(500).json({
       message: "Failed to fetch wishlist",

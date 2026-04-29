@@ -24,6 +24,7 @@ const heroSliderRoutes = require("./routes/heroSliderRoutes")
 const wishlistRoutes = require("./routes/wishlistRoutes")
 const reviewRoutes = require("./routes/reviewRoutes")
 const userRoutes = require("./routes/userRoutes")
+const analyticsRoutes = require("./routes/analyticsRoutes")
 
 // use routes
 app.use('/api/auth', authRoutes);
@@ -37,5 +38,6 @@ app.use('/api/hero-slider', heroSliderRoutes);
 app.use('/api/wishlist', wishlistRoutes);
 app.use('/api/reviews', reviewRoutes);
 app.use('/api/users', userRoutes);
+app.use('/api/product-analytics', analyticsRoutes);
 
 module.exports = app;

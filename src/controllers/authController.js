@@ -206,12 +206,6 @@ async function loginController(req, res) {
       });
     }
 
-    if (user.role !== "admin") {
-      return res.status(403).json({
-        message: "Not authorized as admin",
-      });
-    }
-
     // generate token
     const token = jwt.sign(
       { id: user._id, role: user.role },
