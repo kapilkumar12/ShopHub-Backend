@@ -141,18 +141,18 @@ async function resendOtpController(req, res) {
     }
     const user = await userModel.findOne({ email });
     if (!user) {
-      return res.status(400).josn({
+      return res.status(400).json({
         message: "User not found",
       });
     }
     if (user.isVerified) {
-      return res.status(400).josn({
+      return res.status(400).json({
         message: "User already verified",
       });
     }
     await OTP.deleteMany({ email });
     const otpValue = generateOTP();
-    const hashedOto = await bcrypt.hash(otpValue, 10);
+    const hashedOtp = await bcrypt.hash(otpValue, 10);
     await OTP.create({
       email,
       otp: hashedOtp,
@@ -206,6 +206,12 @@ async function loginController(req, res) {
       });
     }
 
+    if (user.role !== "admin") {
+      return res.status(403).json({
+        message: "Not authorized as admin",
+      });
+    }
+
     // generate token
     const token = jwt.sign(
       { id: user._id, role: user.role },
@@ -242,21 +248,21 @@ async function loginController(req, res) {
 
 async function getUserController(req, res) {
   try {
-      const userId = req.user.id || req.user._id;
-      const user = await userModel.findById(userId).select("-password");
-      if (!user) {
-        return res.status(404).json({
-          message:"User not found"
-        })
-      }
-      res.status(200).json({
-        user
-      })
+    const userId = req.user.id || req.user._id;
+    const user = await userModel.findById(userId).select("-password");
+    if (!user) {
+      return res.status(404).json({
+        message: "User not found",
+      });
+    }
+    res.status(200).json({
+      user,
+    });
   } catch (error) {
     return res.status(500).json({
-      message:"User fetch failed",
-      error: error.message
-    })
+      message: "User fetch failed",
+      error: error.message,
+    });
   }
 }
 
@@ -281,5 +287,5 @@ module.exports = {
   loginController,
   getUserController,
   logoutController,
-  resendOtpController
+  resendOtpController,
 };

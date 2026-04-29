@@ -95,7 +95,7 @@ async function getFilteredOrders(req, res) {
       search,
       category,
       page = 1,
-      limit = 5,
+      limit = 20,
     } = req.query;
 
     page = Math.max(1, Number(page));

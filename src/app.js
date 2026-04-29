@@ -20,6 +20,10 @@ const orderRoutes = require('./routes/orderRoutes')
 const adminOrderRoutes = require('./routes/adminOrderRoutes')
 const paymentRoutes = require("./routes/paymentRoutes")
 const adminRoutes = require('./routes/adminRoutes')
+const heroSliderRoutes = require("./routes/heroSliderRoutes")
+const wishlistRoutes = require("./routes/wishlistRoutes")
+const reviewRoutes = require("./routes/reviewRoutes")
+const userRoutes = require("./routes/userRoutes")
 
 // use routes
 app.use('/api/auth', authRoutes);
@@ -29,6 +33,9 @@ app.use('/api/orders', orderRoutes);
 app.use('/api/order/admin', adminOrderRoutes);
 app.use('/api/payment', paymentRoutes);
 app.use('/api/admin', adminRoutes);
-
+app.use('/api/hero-slider', heroSliderRoutes);
+app.use('/api/wishlist', wishlistRoutes);
+app.use('/api/reviews', reviewRoutes);
+app.use('/api/users', userRoutes);
 
 module.exports = app;

@@ -16,10 +16,39 @@ function extractFileId(url) {
 
 async function addProductController(req, res) {
   try {
-    const { name, description, price, category, stock } = req.body;
-    if (!name || !description || !price || !category || !stock) {
+    const {
+      name,
+      description,
+      basePrice,
+      category,
+      stock,
+      gst,
+      discountPercent,
+      shippingCost,
+    } = req.body;
+
+    if (
+      !name ||
+      !description ||
+      basePrice === undefined ||
+      !category ||
+      stock === undefined ||
+      gst === undefined
+    ) {
       return res.status(400).json({
-        message: "All fields are required",
+        message: "Required fields missing",
+      });
+    }
+
+    const parsedBasePrice = Number(basePrice);
+    const parsedStock = Number(stock);
+    const parsedGst = Number(gst);
+    const parsedDiscountPercent = Number(discountPercent) || 0;
+    const parsedShippingCost = Number(shippingCost) || 0;
+
+    if (parsedBasePrice < 0 || parsedStock < 0) {
+      return res.status(400).json({
+        message: "Invalid price or stock",
       });
     }
 
@@ -44,10 +73,14 @@ async function addProductController(req, res) {
     const product = await productModel.create({
       name,
       description,
-      price,
+      basePrice: parsedBasePrice,
       category,
-      stock,
+      stock: parsedStock,
       images: imageUrls,
+      createdBy: req.user.id,
+      gst: parsedGst,
+      discountPercent: parsedDiscountPercent,
+      shippingCost: parsedShippingCost,
       createdBy: req.user.id,
     });
 
@@ -68,6 +101,7 @@ async function getAllProductsController(req, res) {
       .find({})
       .sort({ createdAt: -1 })
       .populate("createdBy", "name email");
+
     res.status(200).json({
       message: "Products fetched successfully",
       count: products.length,
@@ -83,7 +117,12 @@ async function getAllProductsController(req, res) {
 async function getSingleProductController(req, res) {
   try {
     const id = req.params.id;
-    const product = await productModel.findById(id);
+
+    const product = await productModel.findByIdAndUpdate(
+      id,
+      { $inc: { views: 1 } },
+      { new: true }
+    );
 
     if (!product) {
       return res.status(404).json({ message: "Product not found" });
@@ -93,6 +132,7 @@ async function getSingleProductController(req, res) {
       message: "Product fetched successfully",
       product,
     });
+
   } catch (error) {
     return res.status(500).json({ message: "Internal server error" });
   }
@@ -120,7 +160,16 @@ async function updateProductController(req, res) {
     }
 
     // 🔒 allowed fields only
-    const fields = ["name", "description", "price", "category", "stock"];
+    const fields = [
+      "name",
+      "description",
+      "basePrice",
+      "category",
+      "stock",
+      "gst",
+      "discountPercent",
+      "shippingCost",
+    ];
 
     fields.forEach((field) => {
       if (req.body[field] !== undefined) {
@@ -138,7 +187,7 @@ async function updateProductController(req, res) {
 
     if (deletedImages.length > 0) {
       for (const img of deletedImages) {
-         if (!img.fileId) continue;
+        if (!img.fileId) continue;
         try {
           await imagekit.deleteFile(img.fileId);
         } catch (error) {
@@ -146,7 +195,7 @@ async function updateProductController(req, res) {
         }
       }
       product.images = product.images.filter(
-        (img) => !deletedImages.some((d) =>  d.fileId === img.fileId),
+        (img) => !deletedImages.some((d) => d.fileId === img.fileId),
       );
     }
 
@@ -169,7 +218,7 @@ async function updateProductController(req, res) {
 
     return res.status(200).json({
       message: "Product updated successfully",
-      product: product,
+      product,
     });
   } catch (error) {
     console.error("Update Product Error:", error);
@@ -212,10 +261,154 @@ async function deleteProductController(req, res) {
   }
 }
 
+// related products
+
+async function getRelatedProductsController(req, res) {
+  try {
+    const { productId } = req.params;
+    const product = await productModel.findById(productId);
+
+    if (!product) {
+      return res.status(404).json({
+        message: "Product not found",
+      });
+    }
+
+    const minPrice = product.basePrice - 20000;
+    const maxPrice = product.basePrice + 20000;
+
+    const relatedProducts = await productModel
+      .find({
+        category: product.category,
+        _id: { $ne: product._id },
+        stock: { $gt: 0 },
+        basePrice: { $gte: minPrice, $lte: maxPrice },
+      })
+      .sort({ createdAt: -1 })
+      .limit(10);
+
+    res.status(200).json({
+      message: "Related products fetched",
+      count: relatedProducts.length,
+      products: relatedProducts,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      message: "Failed to fetch related products",
+      error: error.message,
+    });
+  }
+}
+
+
+// most viewed controller
+
+async function getMostViewedProductsController(req, res) {
+  try {
+
+    const products = await productModel.find({stock: {$gt : 0}}).sort({views: -1, createdAt: -1}).limit(10);
+
+    res.status(200).json({
+      message:"Most viewed products fetched",
+      products
+    })
+    
+  } catch (error) {
+    return res.status(500).json({
+      message: "Failed to fetch most viewed products",
+    });
+  }
+}
+
+
+// trending products
+
+async function getTrendingProductsController(req, res) {
+  try {
+    const products = await productModel.aggregate([
+       {
+        $match: {stock: {$gt: 0}}
+       },
+       {
+        $addFields: {
+          daysOld: {
+            $divide: [
+              { $subtract: [new Date(), "$createdAt"] },
+              1000 * 60 * 60 * 24
+            ]
+          }
+        }
+      },
+
+      // ✅ recency boost (new product = higher score)
+
+       {
+        $addFields:{
+          recencyScore:{
+            $cond:[
+                  {$lte: ["$daysOld", 7]}, 100,
+                  { $cond:[
+                    {$lte:["$daysOld", 30]}, 50
+                  ]}
+            ]
+          }
+        }
+       },
+
+             // ✅ FINAL TREND SCORE
+      {
+        $addFields: {
+          trendScore: {
+            $add: [
+              { $multiply: ["$salesCount", 0.5] },
+              { $multiply: ["$wishlistCount", 0.3] },
+              { $multiply: ["$views", 0.15] },
+              { $multiply: ["$recencyScore", 0.05] }
+            ]
+          }
+        }
+      },
+
+       {
+        $sort:{trendScore: -1}
+       },
+
+       {
+        $limit:10
+       },
+       
+       {
+        $project: {
+          name: 1,
+          images: 1,
+          basePrice: 1,
+          salesCount: 1,
+          views: 1,
+          wishlistCount: 1,
+          trendScore: 1
+        }
+      }
+    ])
+
+    res.status(200).json({
+      message: "Trending products fetched",
+      products,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      message: "Failed to fetch trending products",
+    });
+  }
+}
+
+
 module.exports = {
   addProductController,
   getAllProductsController,
   getSingleProductController,
   updateProductController,
   deleteProductController,
+  getRelatedProductsController,
+  getTrendingProductsController,
+  getMostViewedProductsController
 };

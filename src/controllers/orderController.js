@@ -13,12 +13,17 @@ const orderDeliveredTemplate = require("../utils/emailTemplates/orderDeliveredTe
 const generateInvoice = require("../utils/generateInvoice");
 const { Resend } = require("resend");
 const resend = new Resend(process.env.RESEND_API_KEY);
+const orderTemplate = require("../utils/emailTemplates/orderTemplate");
+const userModel = require("../models/userModel");
+const orderConfirmedTemplate = require("../utils/emailTemplates/orderConfirmedTemplate");
 
 // create order and empty cart
 async function createOrderController(req, res) {
   try {
     const userId = req.user.id;
     const { address, phone, paymentMethod } = req.body;
+    const user = await userModel.findById(userId);
+
     const cart = await cartModel
       .findOne({ user: userId })
       .populate("items.product");
@@ -27,6 +32,18 @@ async function createOrderController(req, res) {
       return res.status(404).json({
         message: "Cart is empty",
       });
+    }
+
+    for (let item of cart.items) {
+      const product = item.product;
+
+      if (!product) continue;
+
+      if (product.stock < item.quantity) {
+        return res.status(400).json({
+          message: `${product.name} is out of stock`,
+        });
+      }
     }
 
     let totalPrice = 0;
@@ -43,6 +60,29 @@ async function createOrderController(req, res) {
       })
       .filter(Boolean);
 
+    for (let item of orderItems) {
+      const updated = await productModel.findOneAndUpdate(
+        {
+          _id: item.productId,
+          stock: { $gte: item.quantity }, // 🔒 prevents overselling
+        },
+        {
+          $inc: {
+            stock: -item.quantity,
+            salesCount: item.quantity,
+          },
+        },
+        { new: true },
+      );
+
+      // ❌ if update failed → stock issue
+      if (!updated) {
+        return res.status(400).json({
+          message: "Some products are out of stock. Please try again.",
+        });
+      }
+    }
+
     const order = await orderModel.create({
       user: userId,
       items: orderItems,
@@ -50,7 +90,7 @@ async function createOrderController(req, res) {
       address,
       phone,
       status: "pending",
-      paymentStatus: paymentMethod === "cod" ? "pending" : "pending",
+      paymentStatus: paymentMethod === "cod" ? "pending" : "paid",
       paymentMethod,
       trackingHistory: [
         {
@@ -62,6 +102,29 @@ async function createOrderController(req, res) {
 
     cart.items = [];
     await cart.save();
+
+    await Promise.all(
+      orderItems.map((item) =>
+        productModel.findByIdAndUpdate(item.productId, {
+          $inc: { stock: -item.quantity, salesCount: item.quantity },
+        }),
+      ),
+    );
+
+    const html = orderTemplate({
+      name: user.name,
+      orderId: order._id,
+      date: order.createdAt,
+    });
+
+    const userEmail = user.email;
+
+    await sendEmail({
+      to: userEmail,
+      subject: "Order Created",
+      text: `Hello ${user.name}, your order ${order._id} has been created successfully.`,
+      html,
+    });
 
     res.status(200).json({
       message: "Order create successfully",
@@ -138,6 +201,19 @@ async function orderCancelController(req, res) {
       });
     }
 
+    for (let item of order.items) {
+      await productModel.findByIdAndUpdate(item.productId, {
+        $inc: {
+          stock: item.quantity,
+          salesCount: -item.quantity,
+        },
+      });
+    }
+
+    if (order.status === "cancelled") {
+      return res.status(400).json({ message: "Already cancelled" });
+    }
+
     if (order.user._id.toString() !== userId.toString()) {
       console.log("order user id:", order.user._id.toString());
       console.log("userId:", userId);
@@ -148,7 +224,7 @@ async function orderCancelController(req, res) {
 
     if (["shipped", "delivered", "cancelled"].includes(order.status)) {
       return res.status(400).json({
-        message: "Cannot cancel this order",
+        message: "Order cannot be cancelled now",
       });
     }
 
@@ -380,27 +456,29 @@ async function invoiceController(req, res) {
       return res.status(404).json({ message: "Order not found" });
     }
 
-    const pdfBuffer = await generateInvoice(order);
+    const pdfBuffer = await generateInvoice(order, order.user);
 
     await resend.emails.send({
-      from:"onboarding@resend.dev",
-      to:order.user.email,
-      subject:"Your Invoice",
-      html:"<p>Your invoice is attached</p>",
-      attachments:[
+      from: "onboarding@resend.dev",
+      to: order.user.email,
+      subject: "Your Invoice",
+      html: "<p>Your invoice is attached</p>",
+      attachments: [
         {
-          filename:`invoice-${order._id}.pdf`,
-          content:pdfBuffer
-        }
-      ]
-    })
-
-    res.set({
-      "Content-Type": "application/pdf",
-      "Content-Disposition": `attachment; filename=invoice-${order._id}.pdf`,
+          filename: `invoice-${order._id}.pdf`,
+          content: pdfBuffer.toString("base64"),
+        },
+      ],
     });
 
-    res.send(pdfBuffer);
+    res.setHeader("Content-Type", "application/pdf");
+
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename=invoice-${order._id}.pdf`,
+    );
+
+    res.end(pdfBuffer);
   } catch (error) {
     console.log("INVOICE ERROR:", error);
     res.status(500).json({

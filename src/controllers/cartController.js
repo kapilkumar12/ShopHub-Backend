@@ -60,7 +60,7 @@ async function getAllCartController(req, res) {
       .findOne({ user: userId })
       .populate("items.product", "name price images");
     if (!cart || cart.items.length === 0) {
-      return res.status(401).json({
+      return res.status(200).json({
         message: "Cart is empty",
         items: [],
         totalPrice: 0,
