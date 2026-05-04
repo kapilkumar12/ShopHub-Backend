@@ -1,9 +1,8 @@
-const { default: IORedis } = require("ioredis");
+const { Redis } = require("@upstash/redis");
 
-const connection = new IORedis({
-  host: "127.0.0.1",
-  port: 6379,
-   maxRetriesPerRequest: null,
+const connection = new Redis({
+ url: process.env.UPSTASH_REDIS_REST_URL,
+  token: process.env.UPSTASH_REDIS_REST_TOKEN,
 });
 
 module.exports = connection;
