@@ -5,10 +5,26 @@ const cookieParser = require('cookie-parser');
 
 const app = express();
 app.use(express.json());
+
+const allowedOrigins = [
+  "https://shop-hub-three-lake.vercel.app",
+  "https://shophub-admin-panel.vercel.app"
+];
+
 app.use(cors({
-  origin: "http://localhost:5173",
+  origin: function (origin, callback) {
+    // allow requests with no origin (mobile apps, postman)
+    if (!origin) return callback(null, true);
+
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    } else {
+      return callback(new Error("CORS not allowed"));
+    }
+  },
   credentials: true
 }));
+
 app.use(cookieParser());
 
 
@@ -39,5 +55,13 @@ app.use('/api/wishlist', wishlistRoutes);
 app.use('/api/reviews', reviewRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/product-analytics', analyticsRoutes);
+
+app.use((err, req, res, next) => {
+  console.error(err.message);
+  res.status(500).json({
+    success: false,
+    message: err.message || "Server Error"
+  });
+});
 
 module.exports = app;

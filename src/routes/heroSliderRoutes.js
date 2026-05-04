@@ -20,7 +20,7 @@ router.post(
   upload.single("image"),
   addHeroSliderController,
 );
-router.get("/", authMiddleware, getSlidersController);
+router.get("/", getSlidersController);
 router.get("/single/:id", authMiddleware, getSingleSliderController);
 router.put(
   "/update/:sliderId",
