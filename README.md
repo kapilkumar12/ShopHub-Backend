@@ -199,8 +199,6 @@ JWT_SECRET=your_secret
 EMAIL_USER=your_email
 EMAIL_PASS=your_password
 
-REDIS_HOST=127.0.0.1
-REDIS_PORT=6379
 ```
 
 ---
