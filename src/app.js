@@ -13,13 +13,19 @@ const allowedOrigins = [
 
 app.use(cors({
   origin: function (origin, callback) {
-    // allow requests with no origin (mobile apps, postman)
+    // allow requests with no origin (Postman, mobile apps)
     if (!origin) return callback(null, true);
 
-    if (allowedOrigins.includes(origin)) {
-      return callback(null, true);
+    // allow exact match OR subdomains (Vercel previews)
+    const isAllowed = allowedOrigins.some((allowed) =>
+      origin.startsWith(allowed)
+    );
+
+    if (isAllowed) {
+      callback(null, true);
     } else {
-      return callback(new Error("CORS not allowed"));
+      console.log("Blocked by CORS:", origin); // 🔥 debug
+      callback(new Error("CORS not allowed"));
     }
   },
   credentials: true
