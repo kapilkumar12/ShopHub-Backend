@@ -56,46 +56,68 @@ async function addToCartController(req, res) {
 async function getAllCartController(req, res) {
   try {
     const userId = req.user.id;
+
     const cart = await cartModel
       .findOne({ user: userId })
-      .populate("items.product", "name price images");
+      .populate("items.product");
+
     if (!cart || cart.items.length === 0) {
-      return res.status(200).json({
-        message: "Cart is empty",
+      return res.json({
         items: [],
-        totalPrice: 0,
+        summary: {
+          subtotal: 0,
+          gstAmount: 0,
+          shippingCost: 0,
+          total: 0,
+        },
       });
     }
 
-    // total price calculate
+    let subtotal = 0;
+    let gstTotal = 0;
+    let shippingCost = 0;
 
-    let totalPrice = 0;
+    const items = cart.items.map((item) => {
+      const p = item.product;
 
-    const formattedItems = cart.items
-      .map((item) => {
-        const product = item.product;
-        if (!product) return null;
-        totalPrice += product.price * item.quantity;
-        return {
-          productId: product._id,
-          name: product.name,
-          price: product.price,
-          image: product.images?.[0] || null,
-          quantity: item.quantity,
-        };
-      })
-      .filter(Boolean);
+      const sellingPrice = p.sellingPrice || 0;
+      const gstAmount = p.gstAmount || 0;
+      const productShipping = p.shippingCost || 0;
+      const finalPrice = p.finalPrice || 0;
 
-    res.status(200).json({
-      message: "Cart fetched successfully",
-      items: formattedItems,
-      totalPrice,
+      subtotal += sellingPrice * item.quantity;
+      gstTotal += gstAmount * item.quantity;
+      shippingCost += productShipping * item.quantity;
+
+      return {
+        product: {
+          _id: p._id,
+          name: p.name,
+          images: p.images,
+        },
+        pricing: {
+          sellingPrice,
+          gstAmount,
+          shippingCost: productShipping,
+          finalPrice,
+        },
+        quantity: item.quantity,
+        total: finalPrice * item.quantity,
+      };
+    });
+
+    res.json({
+      items,
+      summary: {
+        totalItems: items.length,
+        subtotal,
+        gstAmount: gstTotal,
+        shippingCost,
+        total: subtotal + gstTotal + shippingCost,
+      },
     });
   } catch (error) {
-    res.status(500).json({
-      message: "Failed to fetch cart",
-      error: error.message,
-    });
+    res.status(500).json({ error: error.message });
   }
 }
 
@@ -212,5 +234,5 @@ module.exports = {
   getAllCartController,
   updateCartController,
   productRemoveFromCartController,
-  deleteCartController
+  deleteCartController,
 };

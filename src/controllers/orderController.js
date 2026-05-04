@@ -22,6 +22,7 @@ async function createOrderController(req, res) {
   try {
     const userId = req.user.id;
     const { address, phone, paymentMethod } = req.body;
+
     const user = await userModel.findById(userId);
 
     const cart = await cartModel
@@ -29,14 +30,14 @@ async function createOrderController(req, res) {
       .populate("items.product");
 
     if (!cart || cart.items.length === 0) {
-      return res.status(404).json({
-        message: "Cart is empty",
-      });
+      return res.status(404).json({ message: "Cart is empty" });
     }
 
+    /////////////////////////////////////////////////////////
+    // 🔒 STOCK CHECK
+    /////////////////////////////////////////////////////////
     for (let item of cart.items) {
       const product = item.product;
-
       if (!product) continue;
 
       if (product.stock < item.quantity) {
@@ -46,36 +47,45 @@ async function createOrderController(req, res) {
       }
     }
 
+    /////////////////////////////////////////////////////////
+    // ✅ CALCULATION (USE SCHEMA VALUES)
+    /////////////////////////////////////////////////////////
+    let subtotal = 0;
+    let gstTotal = 0;
+    let shippingCost = 0;
     let totalPrice = 0;
-    const orderItems = cart.items
-      .map((item) => {
-        if (!item.product) return null;
 
-        const price = Number(item.product.finalPrice) || 0;
-        const quantity = Number(item.quantity) || 0;
+    const orderItems = cart.items.map((item) => {
+      const p = item.product;
+      const quantity = Number(item.quantity) || 0;
 
-        totalPrice += price * quantity;
+      const sellingPrice = Number(p.sellingPrice) || 0;
+      const gstAmount = Number(p.gstAmount) || 0;
+      const productShipping = Number(p.shippingCost) || 0;
+      const finalPrice = Number(p.finalPrice) || 0;
 
-        return {
-          productId: item.product._id,
-          name: item.product.name,
-          price,
-          quantity,
-        };
-      })
-      .filter(Boolean);
+      subtotal += sellingPrice * quantity;
+      gstTotal += gstAmount * quantity;
+      shippingCost += productShipping * quantity;
+      totalPrice += finalPrice * quantity;
 
-    if (isNaN(totalPrice)) {
-      return res.status(400).json({
-        message: "Invalid total price",
-      });
-    }
+      return {
+        productId: p._id,
+        name: p.name,
+        price: finalPrice,
+        quantity,
+        category: p.category,
+      };
+    });
 
+    /////////////////////////////////////////////////////////
+    // 🔒 UPDATE STOCK
+    /////////////////////////////////////////////////////////
     for (let item of orderItems) {
       const updated = await productModel.findOneAndUpdate(
         {
           _id: item.productId,
-          stock: { $gte: item.quantity }, // 🔒 prevents overselling
+          stock: { $gte: item.quantity },
         },
         {
           $inc: {
@@ -83,10 +93,9 @@ async function createOrderController(req, res) {
             salesCount: item.quantity,
           },
         },
-        { new: true },
+        { new: true }
       );
 
-      // ❌ if update failed → stock issue
       if (!updated) {
         return res.status(400).json({
           message: "Some products are out of stock. Please try again.",
@@ -94,15 +103,26 @@ async function createOrderController(req, res) {
       }
     }
 
+    /////////////////////////////////////////////////////////
+    // ✅ CREATE ORDER (FULL DATA SAVE)
+    /////////////////////////////////////////////////////////
     const order = await orderModel.create({
       user: userId,
       items: orderItems,
+
+      // 🔥 IMPORTANT (INVOICE FIX)
+      subtotal,
+      gstAmount: gstTotal,
+      shippingCost,
       totalPrice,
+
       address,
       phone,
+
       status: "pending",
       paymentStatus: paymentMethod === "cod" ? "pending" : "paid",
       paymentMethod,
+
       trackingHistory: [
         {
           status: "pending",
@@ -111,30 +131,34 @@ async function createOrderController(req, res) {
       ],
     });
 
+    /////////////////////////////////////////////////////////
+    // 🧹 CLEAR CART
+    /////////////////////////////////////////////////////////
     cart.items = [];
     await cart.save();
 
+    /////////////////////////////////////////////////////////
+    // 📧 EMAIL
+    /////////////////////////////////////////////////////////
     const html = orderTemplate({
       name: user.name,
       orderId: order._id,
       date: order.createdAt,
     });
 
-    const userEmail = user.email;
-
     await sendEmail({
-      to: userEmail,
+      to: user.email,
       subject: "Order Created",
-      text: `Hello ${user.name}, your order ${order._id} has been created successfully.`,
       html,
     });
 
     res.status(200).json({
-      message: "Order create successfully",
+      message: "Order created successfully",
       order,
     });
+
   } catch (error) {
-    return res.status(500).json({
+    res.status(500).json({
       message: "Order failed",
       error: error.message,
     });
@@ -148,7 +172,8 @@ async function getAllOrdersController(req, res) {
     const userId = req.user.id;
     const orders = await orderModel
       .find({ user: userId })
-      .sort({ createdAt: -1 });
+      .sort({ createdAt: -1 })
+      .populate("items.productId", "name images");
     res.status(200).json({
       message: "Order fetch successfully",
       orders,
@@ -170,7 +195,7 @@ async function getSingleOrderController(req, res) {
     const order = await orderModel
       .findById(orderId)
       .populate("user", "name email")
-      .populate("items.productId", "name price image");
+      .populate("items.productId", "name images");
     if (req.user.role !== "admin" && order.user._id.toString() !== userId) {
       return res.status(403).json({
         message: "Unauthorized access",
@@ -193,7 +218,9 @@ async function getSingleOrderController(req, res) {
 async function orderCancelController(req, res) {
   try {
     const userId = req.user.id;
-    const { reason, orderId } = req.body;
+
+   const orderId = req.params.orderId;
+   const { reason } = req.body;
 
     const order = await orderModel
       .findById(orderId)
@@ -241,6 +268,7 @@ async function orderCancelController(req, res) {
     order.status = "cancelled";
     order.cancelReason = reason;
     order.cancelledAt = new Date();
+    order.refundAmount = order.totalPrice;
 
     let refundResult = null;
     if (order.paymentStatus === "paid") {
@@ -275,12 +303,6 @@ async function orderCancelController(req, res) {
       }
     } else {
       await order.save();
-    }
-
-    for (let item of order.items) {
-      await productModel.findByIdAndUpdate(item.productId, {
-        $inc: { stock: item.quantity },
-      });
     }
 
     const html = orderCancelTemplate({

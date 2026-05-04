@@ -4,131 +4,184 @@ const productModel = require("../models/productModel");
 async function getAdminDashboardController(req, res) {
   try {
     //////////////////////////////////////////////////////////////
-    // 🔥 ORDER STATS
+    // 🔥 PARALLEL EXECUTION (FAST)
     //////////////////////////////////////////////////////////////
 
-    const totalOrders = await orderModel.countDocuments();
+    const [
+      orderStats,
+      revenueResult,
+      dailySales,
+      monthlySales,
+      weeklySales,
+      productStats,
+      topWishlist,
+      topViewed,
+      topSelling,
+      recentOrders,
+    ] = await Promise.all([
+      ////////////////////////////////////////////////////////////
+      // 📦 ORDER COUNTS
+      ////////////////////////////////////////////////////////////
 
-    const pendingOrders = await orderModel.countDocuments({
-      status: "pending",
-    });
-
-    const cancelledOrders = await orderModel.countDocuments({
-      status: "cancelled",
-    });
-
-    const revenueResult = await orderModel.aggregate([
-      {
-        $group: {
-          _id: null,
-          totalRevenue: { $sum: "$totalPrice" },
+      orderModel.aggregate([
+        {
+          $group: {
+            _id: null,
+            totalOrders: { $sum: 1 },
+            pendingOrders: {
+              $sum: {
+                $cond: [{ $eq: ["$status", "pending"] }, 1, 0],
+              },
+            },
+            cancelledOrders: {
+              $sum: {
+                $cond: [{ $eq: ["$status", "cancelled"] }, 1, 0],
+              },
+            },
+          },
         },
-      },
+      ]),
+
+      ////////////////////////////////////////////////////////////
+      // 💰 REVENUE
+      ////////////////////////////////////////////////////////////
+
+      orderModel.aggregate([
+        {
+          $match: {
+            status: "delivered",
+            paymentStatus: "paid",
+          },
+        },
+        {
+          $group: {
+            _id: null,
+            totalRevenue: { $sum: "$totalPrice" },
+          },
+        },
+      ]),
+
+      ////////////////////////////////////////////////////////////
+      // 📊 DAILY SALES
+      ////////////////////////////////////////////////////////////
+
+      orderModel.aggregate([
+        { $match: { status: "delivered", paymentStatus: "paid" } },
+        {
+          $group: {
+            _id: {
+              day: { $dayOfMonth: "$createdAt" },
+              month: { $month: "$createdAt" },
+              year: { $year: "$createdAt" },
+            },
+            total: { $sum: "$totalPrice" },
+          },
+        },
+        { $sort: { "_id.year": 1, "_id.month": 1, "_id.day": 1 } },
+      ]),
+
+      ////////////////////////////////////////////////////////////
+      // 📊 MONTHLY SALES
+      ////////////////////////////////////////////////////////////
+
+      orderModel.aggregate([
+        { $match: { status: "delivered", paymentStatus: "paid" } },
+        {
+          $group: {
+            _id: {
+              month: { $month: "$createdAt" },
+              year: { $year: "$createdAt" },
+            },
+            total: { $sum: "$totalPrice" },
+          },
+        },
+        { $sort: { "_id.year": 1, "_id.month": 1 } },
+      ]),
+
+      ////////////////////////////////////////////////////////////
+      // 📊 WEEKLY SALES
+      ////////////////////////////////////////////////////////////
+
+      orderModel.aggregate([
+        { $match: { status: "delivered", paymentStatus: "paid" } },
+        {
+          $group: {
+            _id: {
+              week: { $isoWeek: "$createdAt" },
+              year: { $isoWeekYear: "$createdAt" },
+            },
+            total: { $sum: "$totalPrice" },
+          },
+        },
+        { $sort: { "_id.year": 1, "_id.week": 1 } },
+      ]),
+
+      ////////////////////////////////////////////////////////////
+      // 📦 PRODUCT STATS
+      ////////////////////////////////////////////////////////////
+
+      productModel.aggregate([
+        {
+          $group: {
+            _id: null,
+            totalWishlist: { $sum: "$wishlistCount" },
+            totalViews: { $sum: "$views" },
+            totalSales: { $sum: "$salesCount" }, // ✅ FIXED
+          },
+        },
+      ]),
+
+      ////////////////////////////////////////////////////////////
+      // 🔥 TOP PRODUCTS
+      ////////////////////////////////////////////////////////////
+
+      productModel.find().sort({ wishlistCount: -1 }).limit(5),
+      productModel.find().sort({ views: -1 }).limit(5),
+      productModel.find().sort({ salesCount: -1 }).limit(5), // ✅ FIXED
+
+      ////////////////////////////////////////////////////////////
+      // 🕒 RECENT ORDERS
+      ////////////////////////////////////////////////////////////
+
+      orderModel
+        .find()
+        .populate("user", "name")
+        .sort({ createdAt: -1 })
+        .limit(5),
     ]);
 
-    const totalRevenue = revenueResult[0]?.totalRevenue || 0;
-
     //////////////////////////////////////////////////////////////
-    // 🔥 SALES (DAILY / WEEKLY / MONTHLY)
+    // 🧠 FINAL RESPONSE
     //////////////////////////////////////////////////////////////
 
-    const dailySales = await orderModel.aggregate([
-      {
-        $group: {
-          _id: { $dayOfMonth: "$createdAt" },
-          total: { $sum: "$totalPrice" },
-        },
-      },
-      { $sort: { _id: 1 } },
-    ]);
-
-    const monthlySales = await orderModel.aggregate([
-      {
-        $group: {
-          _id: { $month: "$createdAt" },
-          total: { $sum: "$totalPrice" },
-        },
-      },
-      { $sort: { _id: 1 } },
-    ]);
-
-    const weeklySales = await orderModel.aggregate([
-      {
-        $group: {
-          _id: { $week: "$createdAt" },
-          total: { $sum: "$totalPrice" },
-        },
-      },
-      { $sort: { _id: 1 } },
-    ]);
-
-    //////////////////////////////////////////////////////////////
-    // 🔥 PRODUCT ANALYTICS
-    //////////////////////////////////////////////////////////////
-
-    const totals = await productModel.aggregate([
-      {
-        $group: {
-          _id: null,
-          totalWishlist: { $sum: "$wishlistCount" },
-          totalViews: { $sum: "$views" },
-          totalSales: { $sum: "$soldCount" },
-        },
-      },
-    ]);
-
-    const stats = totals[0] || {
-      totalWishlist: 0,
-      totalViews: 0,
-      totalSales: 0,
-    };
-
-    const topWishlist = await productModel
-      .find()
-      .sort({ wishlistCount: -1 })
-      .limit(5);
-
-    const topViewed = await productModel.find().sort({ views: -1 }).limit(5);
-
-    const topSelling = await productModel
-      .find()
-      .sort({ soldCount: -1 })
-      .limit(5);
-
-    //////////////////////////////////////////////////////////////
-    // 🔥 RECENT ORDERS
-    //////////////////////////////////////////////////////////////
-
-    const recentOrders = await orderModel
-      .find()
-      .populate("user", "name")
-      .sort({ createdAt: -1 })
-      .limit(5);
-
-    //////////////////////////////////////////////////////////////
+    const orderData = orderStats[0] || {};
+    const revenueData = revenueResult[0] || {};
+    const productData = productStats[0] || {};
 
     res.json({
       // orders
-      totalOrders,
-      pendingOrders,
-      cancelledOrders,
-      totalRevenue,
+      totalOrders: orderData.totalOrders || 0,
+      pendingOrders: orderData.pendingOrders || 0,
+      cancelledOrders: orderData.cancelledOrders || 0,
+      totalRevenue: revenueData.totalRevenue || 0,
 
       // sales
       dailySales,
       monthlySales,
       weeklySales,
 
-      // product analytics
-      stats,
+      // product
+      stats: productData,
+
       topWishlist,
       topViewed,
       topSelling,
 
-      // orders list
+      // recent
       recentOrders,
     });
   } catch (error) {
+    console.error("Dashboard Error:", error.message);
     res.status(500).json({
       message: "Dashboard failed",
       error: error.message,
@@ -150,92 +203,88 @@ async function getFilteredOrders(req, res) {
       endDate,
       search,
       category,
+      minPrice,
+      maxPrice,
+      sort,
       page = 1,
       limit = 20,
     } = req.query;
 
     page = Math.max(1, Number(page));
-    limit = Math.min(50, Number(limit)); // max 50 limit
-
+    limit = Math.min(50, Number(limit));
     const skip = (page - 1) * limit;
 
     let filter = {};
 
-    // 📦 Status filter
+    // 📦 STATUS
     if (status) {
       filter.status = status;
     }
 
-    // 📅 Date filter
+    // 📅 DATE
     if (startDate && endDate) {
+      const end = new Date(endDate);
+      end.setHours(23, 59, 59, 999);
+
       filter.createdAt = {
         $gte: new Date(startDate),
-        $lte: new Date(endDate),
+        $lte: end,
       };
     }
 
-    const matchStage = {
-      ...filter,
-      ...(search
-        ? {
-            $or: [
-              { "user.name": { $regex: search, $options: "i" } },
-              { "user.email": { $regex: search, $options: "i" } },
-            ],
-          }
-        : {}),
-      ...(category
-        ? {
-            "products.category": category,
-          }
-        : {}),
-    };
-
-    const pipeline = [
-      {
-        $lookup: {
-          from: "users",
-          localField: "user",
-          foreignField: "_id",
-          as: "user",
+    // 📦 CATEGORY (from items)
+    if (category || minPrice || maxPrice) {
+      filter.items = {
+        $elemMatch: {
+          ...(category && {
+            category: { $regex: `^${category}$`, $options: "i" },
+          }),
+          ...(minPrice && { price: { $gte: Number(minPrice) } }),
+          ...(maxPrice && { price: { $lte: Number(maxPrice) } }),
         },
-      },
-      { $unwind: "$user" },
+      };
+    }
 
-      // 🔥 join products
-      {
-        $lookup: {
-          from: "products",
-          localField: "items.product",
-          foreignField: "_id",
-          as: "products",
-        },
-      },
+    let sortOption = { createdAt: -1 };
 
-      { $match: matchStage },
+    if (sort === "price_asc") sortOption = { totalPrice: 1 };
+    if (sort === "price_desc") sortOption = { totalPrice: -1 };
+    if (sort === "latest") sortOption = { createdAt: -1 };
 
-      { $sort: { createdAt: -1 } },
-      { $skip: skip },
-      { $limit: limit },
-    ];
+    // 🔥 MAIN QUERY
+    const orders = await orderModel
+      .find(filter)
+      .populate("user", "name email")
+      .sort(sortOption)
+      .skip(skip)
+      .limit(limit);
 
-    const orders = await orderModel.aggregate(pipeline);
+    if (search) {
+      const keyword = search.toLowerCase();
 
-    const totalData = await orderModel.aggregate([
-      ...pipeline.slice(0, -3), // remove skip/limit
-      { $count: "total" },
-    ]);
+      orders = orders.filter((o) => {
+        const name = o.user?.name?.toLowerCase() || "";
+        const email = o.user?.email?.toLowerCase() || "";
 
-    const total = totalData[0]?.total || 0;
+        return name.includes(keyword) || email.includes(keyword);
+      });
+    }
+
+    // 🔢 TOTAL COUNT
+    const total = await orderModel.countDocuments(filter);
+
+    const categories = await orderModel.distinct("items.category");
 
     res.status(200).json({
+      success: true,
       total,
       page,
       totalPages: Math.ceil(total / limit),
       orders,
+      categories,
     });
   } catch (error) {
-    return res.status(500).json({
+    res.status(500).json({
       message: "Fetch orders failed",
       error: error.message,
     });
@@ -251,13 +300,13 @@ async function getFilteredProducts(req, res) {
     }
 
     let {
-      search,
-      category,
-      sort,
+      search = "",
+      category = "",
+      sort = "",
       minPrice,
       maxPrice,
       page = 1,
-      limit = 5,
+      limit = 10,
     } = req.query;
 
     page = Math.max(1, Number(page));
@@ -268,40 +317,44 @@ async function getFilteredProducts(req, res) {
     let filter = {};
 
     // 🔍 SEARCH
-    if (search) {
+    const escapeRegex = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+    if (search && search.trim() !== "") {
+      const keyword = escapeRegex(search);
+
       filter.$or = [
-        { name: { $regex: search, $options: "i" } },
-        { description: { $regex: search, $options: "i" } },
-        { category: { $regex: search, $options: "i" } },
+        { name: { $regex: keyword, $options: "i" } },
+        { description: { $regex: keyword, $options: "i" } },
+        { category: { $regex: keyword, $options: "i" } },
       ];
     }
 
     // 📦 CATEGORY
     if (category) {
-      filter.category = category;
+      filter.category = { $regex: `^${category}$`, $options: "i" };
     }
 
     // 💰 PRICE
     if (minPrice || maxPrice) {
-      filter.price = {};
-      if (minPrice) filter.price.$gte = Number(minPrice);
-      if (maxPrice) filter.price.$lte = Number(maxPrice);
+      filter.sellingPrice = {
+        ...(minPrice && { $gte: Number(minPrice) }),
+        ...(maxPrice && { $lte: Number(maxPrice) }),
+      };
     }
 
     // 🔄 SORT
     let sortOption = { createdAt: -1 };
 
-    if (sort === "price_asc") sortOption = { price: 1 };
-    if (sort === "price_desc") sortOption = { price: -1 };
+    if (sort === "price_asc") sortOption = { finalPrice: 1 };
+    if (sort === "price_desc") sortOption = { finalPrice: -1 };
     if (sort === "latest") sortOption = { createdAt: -1 };
 
-    const products = await productModel
-      .find(filter)
-      .sort(sortOption)
-      .skip(skip)
-      .limit(limit);
+    const [products, total] = await Promise.all([
+      productModel.find(filter).sort(sortOption).skip(skip).limit(limit),
 
-    const total = await productModel.countDocuments(filter);
+      productModel.countDocuments(filter),
+    ]);
+
     const categories = await productModel.distinct("category");
 
     res.status(200).json({

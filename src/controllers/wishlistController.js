@@ -5,12 +5,15 @@ const mongoose = require("mongoose");
 // toggle wishlist controller
 
 async function toggleWishlistController(req, res) {
-  const session = await mongoose.startSession();
-  session.startTransaction();
-
   try {
     const userId = req.user._id || req.user.id;
     const { productId } = req.body;
+
+    if (!productId) {
+      return res.status(400).json({
+        message: "productId is required",
+      });
+    }
 
     const product = await productModel.findById(productId);
     if (!product) {
@@ -25,16 +28,12 @@ async function toggleWishlistController(req, res) {
     });
 
     if (existing) {
-      await wishlistModel.deleteOne({ _id: existing._id }).session(session);
+      await wishlistModel.deleteOne({ _id: existing._id });
 
-      await productModel.findByIdAndUpdate(
-        productId,
+      await productModel.updateOne(
+        { _id: productId, wishlistCount: { $gt: 0 } },
         { $inc: { wishlistCount: -1 } },
-        { session },
       );
-
-      await session.commitTransaction();
-      session.endSession();
 
       return res.status(200).json({
         message: "Removed from wishlist",
@@ -42,19 +41,16 @@ async function toggleWishlistController(req, res) {
       });
     }
 
-    await wishlistModel.create([{ user: userId, product: productId }], {
-      session,
+    await wishlistModel.create({
+      user: userId,
+      product: productId,
     });
 
-    await productModel.findByIdAndUpdate(
-      productId,
+    await productModel.updateOne(
+      { _id: productId },
       { $inc: { wishlistCount: 1 } },
-      { session },
     );
 
-    await session.commitTransaction();
-    session.endSession();
-    
     res.status(200).json({
       message: "Added to wishlist",
       wishlisted: true,
@@ -75,11 +71,13 @@ async function getUserWishlistController(req, res) {
 
     const wishlist = await wishlistModel
       .find({ user: userId })
-      .populate("product");
+      .populate("product")
+      .lean();
 
     res.status(200).json({
       message: "Wishlist fetched",
       products: wishlist.map((item) => item.product),
+      count: wishlist.length,
     });
   } catch (error) {
     return res.status(500).json({
@@ -96,7 +94,7 @@ async function checkWishlistController(req, res) {
     const userId = req.user._id || req.user.id;
     const { productId } = req.params;
 
-    const exists = await wishlistModel.findOne({
+    const exists = await wishlistModel.exists({
       user: userId,
       product: productId,
     });

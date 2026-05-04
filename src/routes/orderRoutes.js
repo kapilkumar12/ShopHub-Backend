@@ -16,7 +16,7 @@ const router = express.Router();
 router.post("/create", authMiddleware, createOrderController);
 router.get("/", authMiddleware, getAllOrdersController);
 router.get("/single/:id", authMiddleware, getSingleOrderController);
-router.post("/cancel", authMiddleware, orderCancelController);
+router.post("/cancel/:orderId", authMiddleware, orderCancelController);
 router.put("/update-status", authMiddleware, updateOrderStatusController);
 router.get("/tracking/:orderId", authMiddleware, getOrderTrackingController);
 router.get('/invoice/:orderId', authMiddleware, invoiceController)

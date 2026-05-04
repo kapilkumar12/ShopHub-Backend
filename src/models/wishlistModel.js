@@ -10,7 +10,7 @@ const wishlistSchema = new mongoose.Schema({
         type: mongoose.Schema.Types.ObjectId,
         ref:"Product",
         required: true
-    }
+    },
 })
 
 wishlistSchema.index({user:1, product:1}, {unique: true})

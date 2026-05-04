@@ -6,11 +6,12 @@ async function addOrUpdateReviewController(req, res) {
     const userId = req.user._id || req.user.id;
     const { productId, rating, comment } = req.body;
 
-    if (!rating) {
+    if (!rating || !productId || !comment) {
       return res.status(400).json({
-        message: "Rating is required",
+        message: "All fields are required",
       });
     }
+
 
     let review = await reviewModel.findOne({
       user: userId,
@@ -58,7 +59,39 @@ async function addOrUpdateReviewController(req, res) {
   }
 }
 
-// GET PRODUCT REVIEWS
+// get all reviews
+
+async function getAllReviewsController(req, res) {
+  try {
+    const { page = 1, limit = 10, productId } = req.query;
+
+    let filter = {};
+    if (productId) filter.product = productId;
+
+    const reviews = await reviewModel
+      .find(filter)
+      .populate("user", "name")
+      .populate("product", "name")
+      .sort({ createdAt: -1 })
+      .skip((page - 1) * limit)
+      .limit(limit);
+
+    res.status(200).json({
+      success: true,
+      message: "Reviews fetched successfully",
+      count: reviews.length,
+      reviews,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: "Reviews fetch failed",
+      error: error.message,
+    });
+  }
+}
+
+// GET SINGLE PRODUCT REVIEWS
 
 async function getProductReviewsController(req, res) {
   try {
@@ -66,7 +99,8 @@ async function getProductReviewsController(req, res) {
 
     const reviews = await reviewModel
       .find({ product: productId })
-      .populate("user", "name");
+      .populate("user", "name")
+      .populate("product", "name");
 
     res.status(200).json({
       message: "Reviews fetched",
@@ -88,6 +122,8 @@ async function deleteReviewController(req, res) {
     const userId = req.user._id || req.user.id;
     const { reviewId } = req.params;
 
+    const userRole = req.user.role;
+
     const review = await reviewModel.findById(reviewId);
 
     if (!review) {
@@ -96,11 +132,12 @@ async function deleteReviewController(req, res) {
       });
     }
 
-    if (review.user.toString() !== userId.toString()) {
+    if (review.user.toString() !== userId.toString() && userRole !== "admin") {
       return res.status(403).json({
         message: "Unauthorized",
       });
     }
+    
 
     await review.deleteOne();
 
@@ -133,6 +170,7 @@ async function deleteReviewController(req, res) {
 
 module.exports = {
   addOrUpdateReviewController,
+  getAllReviewsController,
   getProductReviewsController,
   deleteReviewController,
 };

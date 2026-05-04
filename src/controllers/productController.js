@@ -22,7 +22,7 @@ async function addProductController(req, res) {
       basePrice,
       category,
       stock,
-      gst,
+      gstPercent,
       discountPercent,
       shippingCost,
     } = req.body;
@@ -33,7 +33,7 @@ async function addProductController(req, res) {
       basePrice === undefined ||
       !category ||
       stock === undefined ||
-      gst === undefined
+      gstPercent === undefined
     ) {
       return res.status(400).json({
         message: "Required fields missing",
@@ -42,7 +42,7 @@ async function addProductController(req, res) {
 
     const parsedBasePrice = Number(basePrice);
     const parsedStock = Number(stock);
-    const parsedGst = Number(gst);
+    const parsedGst = Number(gstPercent);
     const parsedDiscountPercent = Number(discountPercent) || 0;
     const parsedShippingCost = Number(shippingCost) || 0;
 
@@ -77,8 +77,7 @@ async function addProductController(req, res) {
       category,
       stock: parsedStock,
       images: imageUrls,
-      createdBy: req.user.id,
-      gst: parsedGst,
+      gstPercent: parsedGst,
       discountPercent: parsedDiscountPercent,
       shippingCost: parsedShippingCost,
       createdBy: req.user.id,
@@ -121,7 +120,7 @@ async function getSingleProductController(req, res) {
     const product = await productModel.findByIdAndUpdate(
       id,
       { $inc: { views: 1 } },
-      { new: true }
+      { new: true, runValidators: true },
     );
 
     if (!product) {
@@ -132,7 +131,6 @@ async function getSingleProductController(req, res) {
       message: "Product fetched successfully",
       product,
     });
-
   } catch (error) {
     return res.status(500).json({ message: "Internal server error" });
   }
@@ -166,7 +164,7 @@ async function updateProductController(req, res) {
       "basePrice",
       "category",
       "stock",
-      "gst",
+      "gstPercent",
       "discountPercent",
       "shippingCost",
     ];
@@ -282,7 +280,7 @@ async function getRelatedProductsController(req, res) {
         category: product.category,
         _id: { $ne: product._id },
         stock: { $gt: 0 },
-        basePrice: { $gte: minPrice, $lte: maxPrice },
+        sellingPrice: { $gte: minPrice, $lte: maxPrice },
       })
       .sort({ createdAt: -1 })
       .limit(10);
@@ -300,19 +298,19 @@ async function getRelatedProductsController(req, res) {
   }
 }
 
-
 // most viewed controller
 
 async function getMostViewedProductsController(req, res) {
   try {
-
-    const products = await productModel.find({stock: {$gt : 0}}).sort({views: -1, createdAt: -1}).limit(10);
+    const products = await productModel
+      .find({ stock: { $gt: 0 } })
+      .sort({ views: -1, createdAt: -1 })
+      .limit(10);
 
     res.status(200).json({
-      message:"Most viewed products fetched",
-      products
-    })
-    
+      message: "Most viewed products fetched",
+      products,
+    });
   } catch (error) {
     return res.status(500).json({
       message: "Failed to fetch most viewed products",
@@ -320,75 +318,85 @@ async function getMostViewedProductsController(req, res) {
   }
 }
 
-
 // trending products
 
 async function getTrendingProductsController(req, res) {
   try {
     const products = await productModel.aggregate([
-       {
-        $match: {stock: {$gt: 0}}
-       },
-       {
+      {
+        $match: { stock: { $gt: 0 } },
+      },
+      {
         $addFields: {
           daysOld: {
             $divide: [
               { $subtract: [new Date(), "$createdAt"] },
-              1000 * 60 * 60 * 24
-            ]
-          }
-        }
+              1000 * 60 * 60 * 24,
+            ],
+          },
+        },
       },
 
       // ✅ recency boost (new product = higher score)
 
-       {
-        $addFields:{
-          recencyScore:{
-            $cond:[
-                  {$lte: ["$daysOld", 7]}, 100,
-                  { $cond:[
-                    {$lte:["$daysOld", 30]}, 50
-                  ]}
-            ]
-          }
-        }
-       },
+      {
+        $addFields: {
+          recencyScore: {
+            $cond: [
+              { $lte: ["$daysOld", 7] },
+              100,
+              {
+                $cond: [
+                  { $lte: ["$daysOld", 30] },
+                  50,
+                  10, // 👈 fallback जरूरी है
+                ],
+              },
+            ],
+          },
+        },
+      },
 
-             // ✅ FINAL TREND SCORE
+      // ✅ FINAL TREND SCORE
       {
         $addFields: {
           trendScore: {
             $add: [
-              { $multiply: ["$salesCount", 0.5] },
-              { $multiply: ["$wishlistCount", 0.3] },
-              { $multiply: ["$views", 0.15] },
-              { $multiply: ["$recencyScore", 0.05] }
-            ]
-          }
-        }
+              { $multiply: [{ $ifNull: ["$salesCount", 0] }, 0.5] },
+              { $multiply: [{ $ifNull: ["$wishlistCount", 0] }, 0.3] },
+              { $multiply: [{ $ifNull: ["$views", 0] }, 0.15] },
+              { $multiply: [{ $ifNull: ["$recencyScore", 0] }, 0.05] },
+            ],
+          },
+        },
       },
 
-       {
-        $sort:{trendScore: -1}
-       },
+      {
+        $sort: { trendScore: -1 },
+      },
 
-       {
-        $limit:10
-       },
-       
-       {
+      {
+        $limit: 10,
+      },
+
+      {
         $project: {
           name: 1,
+          description: 1,
+          finalPrice: 1,
           images: 1,
           basePrice: 1,
           salesCount: 1,
+          averageRating: 1,
+          totalReviews: 1,
           views: 1,
           wishlistCount: 1,
-          trendScore: 1
-        }
-      }
-    ])
+          trendScore: 1,
+          shippingCost: 1,
+          discountPercent: 1,
+        },
+      },
+    ]);
 
     res.status(200).json({
       message: "Trending products fetched",
@@ -401,7 +409,6 @@ async function getTrendingProductsController(req, res) {
   }
 }
 
-
 module.exports = {
   addProductController,
   getAllProductsController,
@@ -410,5 +417,5 @@ module.exports = {
   deleteProductController,
   getRelatedProductsController,
   getTrendingProductsController,
-  getMostViewedProductsController
+  getMostViewedProductsController,
 };
