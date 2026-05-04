@@ -108,8 +108,8 @@ async function otpVerifyController(req, res) {
     );
     res.cookie("token", token, {
       httpOnly: true,
-      secure: false, // production me true
-      sameSite: "strict",
+      secure: true, // production me true
+      sameSite: "none",
       maxAge: 3 * 24 * 60 * 60 * 1000,
     });
 
@@ -216,8 +216,8 @@ async function loginController(req, res) {
     // 🍪 set cookie
     res.cookie("token", token, {
       httpOnly: true,
-      secure: false, // production → true
-      sameSite: "lax",
+      secure: true, // production me true
+      sameSite: "none",
       maxAge: 3 * 24 * 60 * 60 * 1000,
     });
 
@@ -265,8 +265,8 @@ async function getUserController(req, res) {
 async function logoutController(req, res) {
   const cookieOptions = {
     httpOnly: true,
-    secure: false, // production → true
-    sameSite: "strict",
+    secure: true, // production → true
+    sameSite: "none",
     maxAge: 0,
   };
   res.clearCookie("token", cookieOptions);

@@ -7,10 +7,17 @@ const http = require("http");
 connectDB();
 
 const server = http.createServer(app);
+
+const allowedOrigins = [
+  "http://localhost:3000",
+  "https://project1.com",
+  "https://project2.com",
+  "https://admin.project.com"
+];
+
 const io = new Server(server,{
     cors: {
-    origin: "http://localhost:5173", 
-    methods: ["GET", "POST"],
+    origin: allowedOrigins,
     credentials: true
   },
 })
