@@ -20,12 +20,8 @@ router.get(
   adminMiddleware,
   getFilteredOrders,
 );
-router.get(
-  "/products/filter",
-  authMiddleware,
-  adminMiddleware,
-  getFilteredProducts,
-);
+
+router.get("/products/filter", getFilteredProducts,);
 
 
 module.exports = router;
