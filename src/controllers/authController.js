@@ -5,7 +5,25 @@ const sendEmail = require("../utils/sendEmail");
 const jwt = require("jsonwebtoken");
 const bcrypt = require("bcrypt");
 const otpTemplate = require("../utils/emailTemplates/otpTemplate");
-const { tryCatch } = require("bullmq");
+
+
+const generateAccessToken = (user) => {
+  return jwt.sign(
+    { id: user._id, role: user.role },
+    process.env.JWT_SECRET,
+    { expiresIn: "15m" } // short life
+  );
+};
+
+const generateRefreshToken = (user) => {
+  return jwt.sign(
+    { id: user._id },
+    process.env.JWT_REFRESH_SECRET,
+    { expiresIn: "7d" }
+  );
+};
+
+
 
 // sign-up controller
 
@@ -99,26 +117,24 @@ async function otpVerifyController(req, res) {
 
     await OTP.deleteMany({ email });
 
-    const token = jwt.sign(
-      { id: user._id, role: user.role },
-      process.env.JWT_SECRET,
-      {
-        expiresIn: "3d",
-      },
-    );
-    res.cookie("token", token, {
+    const accessToken = generateAccessToken(user);
+    const refreshToken = generateRefreshToken(user);
+
+    res.cookie("refreshToken", refreshToken, {
       httpOnly: true,
       secure: true, // production me true
       sameSite: "none",
-      maxAge: 3 * 24 * 60 * 60 * 1000,
+      path: "/",
     });
 
     res.status(200).json({
       message: "OTP verified successfully",
+      accessToken,
       user: {
         id: user._id,
         name: user.name,
         email: user.email,
+        role: user.role,
       },
     });
   } catch (error) {
@@ -158,7 +174,7 @@ async function resendOtpController(req, res) {
       otp: hashedOtp,
       expiresAt: new Date(Date.now() + 5 * 60 * 1000), // 5 min
     });
-    const html = otpTemplate(otpValue, name);
+    const html = otpTemplate(otpValue, user.name);
     await sendEmail({
       to: email,
       subject: "Resend OTP Verification",
@@ -206,29 +222,25 @@ async function loginController(req, res) {
       });
     }
 
-    // generate token
-    const token = jwt.sign(
-      { id: user._id, role: user.role },
-      process.env.JWT_SECRET,
-      { expiresIn: "3d" },
-    );
+    const accessToken = generateAccessToken(user);
+    const refreshToken = generateRefreshToken(user);
 
     // 🍪 set cookie
-    res.cookie("token", token, {
-      httpOnly: true,
-      secure: true, // production me true
-      sameSite: "none",
-      path: "/",
-      maxAge: 3 * 24 * 60 * 60 * 1000,
-    });
+  res.cookie("refreshToken", refreshToken, {
+    httpOnly: true,
+    secure: true,
+    sameSite: "none",
+    path: "/",
+  });
 
     res.status(200).json({
       message: "Login successful",
-      token: token,
+      accessToken,
       user: {
         id: user._id,
         name: user.name,
         email: user.email,
+        role: user.role,
       },
     });
   } catch (error) {
@@ -236,6 +248,28 @@ async function loginController(req, res) {
       message: "Login failed",
       error: error.message,
     });
+  }
+}
+
+
+// refresh token
+
+async function refreshTokenController(req, res) {
+  const token = req.cookies.refreshToken;
+
+  if (!token) {
+    return res.status(401).json({ message: "No refresh token" });
+  }
+
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_REFRESH_SECRET);
+    const user = await userModel.findById(decoded.id);
+
+    const newAccessToken = generateAccessToken(user);
+
+    res.json({ accessToken: newAccessToken });
+  } catch (error) {
+    res.status(403).json({ message: "Invalid refresh token" });
   }
 }
 
@@ -264,13 +298,13 @@ async function getUserController(req, res) {
 // logout controller
 
 async function logoutController(req, res) {
-  const cookieOptions = {
+
+  res.clearCookie("refreshToken", {
     httpOnly: true,
-    secure: true, // production → true
+    secure: true,
     sameSite: "none",
-    maxAge: 0,
-  };
-  res.clearCookie("token", cookieOptions);
+  });
+
   res.status(200).json({
     message: "Logout successful",
   });
@@ -279,8 +313,9 @@ async function logoutController(req, res) {
 module.exports = {
   signUpController,
   otpVerifyController,
+  resendOtpController,
   loginController,
+  refreshTokenController,
   getUserController,
   logoutController,
-  resendOtpController,
 };

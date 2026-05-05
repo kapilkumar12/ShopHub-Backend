@@ -10,5 +10,6 @@ router.post('/resend-otp', authController.resendOtpController)
 router.post('/login', loginLimiter, authController.loginController)
 router.get('/me', authMiddleware, authController.getUserController)
 router.get('/logout', authController.logoutController)
+router.get("/refresh", authController.refreshTokenController);
 
 module.exports = router;
