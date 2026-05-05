@@ -5,18 +5,13 @@ const { Server } = require("socket.io");
 
 const app = require("./src/app");
 const connectDB = require("./src/config/db");
+const allowedOrigins = require("./src/allowedOrigins")
 
 // 🔥 Connect DB
 connectDB();
 
 // 🔥 Create HTTP server
 const server = http.createServer(app);
-
-// ✅ Allowed Origins (NO trailing slash)
-const allowedOrigins = [
-  "https://shop-hub-three-lake.vercel.app",
-  "https://shophub-admin-panel.vercel.app"
-];
 
 // 🔥 Socket.IO setup
 const io = new Server(server, {

@@ -2,32 +2,15 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const cookieParser = require('cookie-parser');
+const allowedOrigins = require("./allowedOrigins")
+
 
 const app = express();
 app.use(express.json());
 
-const allowedOrigins = [
-  "https://shop-hub-three-lake.vercel.app",
-  "https://shophub-admin-panel.vercel.app"
-];
 
 app.use(cors({
-  origin: function (origin, callback) {
-    // allow requests with no origin (Postman, mobile apps)
-    if (!origin) return callback(null, true);
-
-    // allow exact match OR subdomains (Vercel previews)
-    const isAllowed = allowedOrigins.some((allowed) =>
-      origin.startsWith(allowed)
-    );
-
-    if (isAllowed) {
-      callback(null, true);
-    } else {
-      console.log("Blocked by CORS:", origin); // 🔥 debug
-      callback(new Error("CORS not allowed"));
-    }
-  },
+  origin: allowedOrigins,
   credentials: true
 }));
 

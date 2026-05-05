@@ -218,7 +218,7 @@ async function loginController(req, res) {
       httpOnly: true,
       secure: true, // production me true
       sameSite: "none",
-       path: "/",
+      path: "/",
       maxAge: 3 * 24 * 60 * 60 * 1000,
     });
 
