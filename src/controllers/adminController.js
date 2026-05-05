@@ -295,9 +295,6 @@ async function getFilteredOrders(req, res) {
 
 async function getFilteredProducts(req, res) {
   try {
-    if (req.user.role !== "admin") {
-      return res.status(403).json({ message: "Admin only access" });
-    }
 
     let {
       search = "",
