@@ -6,7 +6,7 @@ console.log(process.env.RESEND_API_KEY);
 const sendEmail = async ({ to, subject, text, html, attachments }) => {
   try {
     const response = await resend.emails.send({
-      from: `Ecommerce App <${process.env.EMAIL_FROM}>`,
+      from: `ShopHub App <${process.env.EMAIL_FROM}>`,
       to,
       subject,
       html: html || `<p>${text}</p>`,

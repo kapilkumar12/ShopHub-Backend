@@ -5,7 +5,7 @@ const orderCancelTemplate = ({ name = "User", orderId, reason }) => {
       
       <!-- Header -->
       <div style="background: linear-gradient(90deg, #ef4444, #dc2626); padding: 20px; text-align: center; color: white;">
-        <h2 style="margin: 0;">Ecommerce App</h2>
+        <h2 style="margin: 0;">ShopHub App</h2>
         <p style="margin: 5px 0 0; font-size: 14px;">Order Cancellation Notice</p>
       </div>
 
@@ -34,7 +34,7 @@ const orderCancelTemplate = ({ name = "User", orderId, reason }) => {
 
       <!-- Footer -->
       <div style="background: #f9fafb; padding: 15px; text-align: center; font-size: 12px; color: #888;">
-        © 2026 Ecommerce App. All rights reserved.
+        © 2026 ShopHub App. All rights reserved.
       </div>
 
     </div>

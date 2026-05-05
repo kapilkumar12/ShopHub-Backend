@@ -5,7 +5,7 @@ const otpTemplate = (otpValue, name = "User") => {
       
       <!-- Header -->
       <div style="background: linear-gradient(90deg, #4f46e5, #6366f1); padding: 20px; text-align: center; color: white;">
-        <h2 style="margin: 0;">Ecommerce App</h2>
+        <h2 style="margin: 0;">ShopHub App</h2>
         <p style="margin: 5px 0 0; font-size: 14px;">Secure OTP Verification</p>
       </div>
 
@@ -31,7 +31,7 @@ const otpTemplate = (otpValue, name = "User") => {
 
       <!-- Footer -->
       <div style="background: #f9fafb; padding: 15px; text-align: center; font-size: 12px; color: #888;">
-        © 2026 Ecommerce App. All rights reserved.
+        © 2026 ShopHub App. All rights reserved.
       </div>
 
     </div>
