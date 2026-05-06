@@ -17,21 +17,11 @@ async function authMiddleware(req, res, next) {
     // ✅ verify token
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
-    // ✅ get user
-    const user = await userModel
-      .findById(decoded.id)
-      .select("_id role");
-
-    if (!user) {
-      return res.status(401).json({
-        message: "Unauthorized - User not found",
-      });
-    }
 
     // ✅ attach user
     req.user = {
-      id: user._id,
-      role: user.role,
+      id: decoded.id,
+      role: decoded.role,
     };
 
     next();
